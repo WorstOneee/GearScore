@@ -1,0 +1,69 @@
+# ============================================================================
+#  GearScore - conexão com o banco (MariaDB / MySQL)
+#
+#  Este arquivo contém a senha: não o compartilhe.
+#  Alterações aqui exigem REINICIAR o servidor (o /gearscore reload não
+#  recria o pool de conexões).
+# ============================================================================
+
+# Com "false" o plugin funciona só em memória: calcula e mostra a pontuação
+# dos jogadores online, sem ranking e sem persistência.
+enabled: true
+
+# mariadb (driver embutido no plugin; também conecta em MySQL)
+# mysql   (usa o driver MySQL fornecido pelo próprio Paper)
+driver: mariadb
+
+host: "127.0.0.1"
+port: 3306
+database: "serpens"
+username: "gearscore"
+password: "troque-esta-senha"
+
+# Parâmetros extras da URL JDBC, sem o "?". Exemplo: "useSsl=false"
+parameters: ""
+
+# Prefixo das tabelas. Use o mesmo valor em todos os servidores da rede.
+# As tabelas e os índices são criados automaticamente (migrações versionadas).
+table-prefix: "gearscore_"
+
+# Pool de conexões. Valores conservadores bastam: o plugin grava em lotes e
+# lê pouco.
+pool:
+  max-connections: 3
+  min-idle: 1
+  connection-timeout-ms: 5000
+  max-lifetime-ms: 1800000
+
+# Gravações: várias alterações do mesmo jogador viram UMA linha (o estado
+# mais recente), enviada em lote por uma única thread.
+writes:
+  # Intervalo entre a primeira alteração pendente e o envio do lote.
+  flush-interval-ms: 3000
+  # Linhas por lote.
+  batch-size: 100
+  # Limite de jogadores com gravação pendente na memória. Se o banco ficar
+  # fora por muito tempo e o limite for atingido, as mais antigas são
+  # descartadas (o jogador é gravado de novo na próxima alteração).
+  max-pending: 5000
+
+# Leituras (entrada de jogador, /gs ver de offline, ranking, posição).
+reads:
+  # Threads dedicadas a leitura. Nunca é criada uma thread por jogador.
+  threads: 1
+  # Leituras aguardando na fila. Acima disso a consulta é recusada com uma
+  # mensagem de "tente novamente" em vez de acumular.
+  max-queued: 64
+  # Cache das consultas de jogadores offline.
+  offline-cache-seconds: 60
+  offline-cache-size: 500
+
+# Se o banco cair, as tentativas são espaçadas progressivamente
+# (2s, 4s, 8s ... até o máximo) e o log não é inundado.
+retry:
+  initial-delay-ms: 2000
+  max-delay-ms: 60000
+
+# Ao desligar, tempo máximo de espera para concluir as gravações pendentes.
+# O servidor nunca fica travado além disso.
+shutdown-timeout-seconds: 5
