@@ -1,0 +1,43 @@
+name: GearScore
+version: '${project.version}'
+main: br.com.serpens.gearscore.GearScorePlugin
+api-version: '1.21'
+author: Zwo
+description: Mede a força dos equipamentos do jogador (armaduras, armas e encantamentos).
+softdepend: [PlaceholderAPI]
+
+commands:
+  gearscore:
+    description: Consulta o GearScore.
+    usage: /<command> [ver <jogador>|detalhes [jogador]|top [página]|reload|diag]
+    aliases: [gs]
+
+permissions:
+  gearscore.use:
+    description: Consultar a própria pontuação.
+    default: true
+  gearscore.view.others:
+    description: Consultar a pontuação de outro jogador.
+    default: true
+  gearscore.details:
+    description: Ver o próprio detalhamento.
+    default: true
+  gearscore.details.others:
+    description: Ver o detalhamento de outro jogador.
+    default: op
+  gearscore.top:
+    description: Ver o ranking.
+    default: true
+  gearscore.admin.reload:
+    description: Recarregar as configurações.
+    default: op
+  gearscore.admin.diag:
+    description: Ver o diagnóstico de desempenho.
+    default: op
+  gearscore.admin:
+    description: Todas as permissões administrativas.
+    default: op
+    children:
+      gearscore.admin.reload: true
+      gearscore.admin.diag: true
+      gearscore.details.others: true
