@@ -9,6 +9,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Versioned schema migrations. Scripts live in {@code db/migration} and are applied in
@@ -21,12 +22,16 @@ public final class Migrator {
 
     private static final List<Migration> MIGRATIONS = List.of(
             new Migration(1, "create players table", "V1__create_players.sql"),
-            new Migration(2, "add ranking and name indexes", "V2__add_indexes.sql"));
+            new Migration(2, "add ranking and name indexes", "V2__add_indexes.sql"),
+            new Migration(3, "stable ranking order", "V3__stable_ranking_order.sql"));
 
-    // MySQL/MariaDB codes for "already exists" on tables and indexes, so a migration that was
-    // interrupted halfway, or raced by another server starting at the same time, can finish.
-    private static final int ER_TABLE_EXISTS = 1050;
-    private static final int ER_DUP_KEYNAME = 1061;
+    // MySQL/MariaDB codes for "already done", so a migration that was interrupted halfway, or
+    // raced by another server starting at the same time, can finish.
+    private static final Set<Integer> ALREADY_APPLIED = Set.of(
+            1050,  // table already exists
+            1060,  // duplicate column name
+            1061,  // duplicate key name
+            1091); // cannot drop: key does not exist
 
     private final String prefix;
 
@@ -78,7 +83,7 @@ public final class Migrator {
                 try {
                     statement.execute(trimmed);
                 } catch (SQLException e) {
-                    if (e.getErrorCode() != ER_TABLE_EXISTS && e.getErrorCode() != ER_DUP_KEYNAME) {
+                    if (!ALREADY_APPLIED.contains(e.getErrorCode())) {
                         throw e;
                     }
                 }

@@ -38,6 +38,7 @@ public final class ScoreEngine {
     }
 
     private static final class State {
+        long session;
         String name;
         GearSnapshot last;
         int generation = -1;
@@ -55,6 +56,7 @@ public final class ScoreEngine {
 
     private ScoreCalculator calculator;
     private int generation;
+    private long nextSession;
 
     public ScoreEngine(RuleSet rules, String serverName, Source source, Sink sink, Metrics metrics, LongSupplier clock) {
         this.calculator = new ScoreCalculator(rules);
@@ -69,8 +71,20 @@ public final class ScoreEngine {
         return calculator.rules();
     }
 
-    public void track(UUID id, String name) {
-        states.computeIfAbsent(id, key -> new State()).name = name;
+    /**
+     * Starts tracking a player.
+     *
+     * @return the session token; asynchronous results must present it to be accepted
+     */
+    public long track(UUID id, String name) {
+        State state = states.get(id);
+        if (state == null) {
+            state = new State();
+            state.session = ++nextSession;
+            states.put(id, state);
+        }
+        state.name = name;
+        return state.session;
     }
 
     public boolean isTracked(UUID id) {
@@ -105,11 +119,12 @@ public final class ScoreEngine {
 
     /**
      * Registers what the database holds for a player so an identical result is not written again.
-     * Until the first evaluation it also backs the cache.
+     * Until the first evaluation it also backs the cache. A result that belongs to an earlier
+     * session of the player (late answer after a quit or reconnect) is ignored.
      */
-    public void seedPersisted(UUID id, PlayerRecord record) {
+    public void seedPersisted(UUID id, long session, PlayerRecord record) {
         State state = states.get(id);
-        if (state == null || record == null) {
+        if (state == null || record == null || state.session != session) {
             return;
         }
         if (state.persisted == null) {

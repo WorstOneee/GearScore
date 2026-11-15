@@ -10,9 +10,10 @@ import org.bukkit.OfflinePlayer;
 import java.util.Locale;
 
 /**
- * PlaceholderAPI expansion. Every placeholder is answered from memory: no SQL, no inventory
- * access, no recalculation. It only supplies values; TAB, holograms and scoreboards decide
- * when to redraw.
+ * PlaceholderAPI expansion. Every placeholder, the ranking position included, is answered
+ * from memory: no SQL, no task, no inventory access, no recalculation, no waiting. The caches
+ * behind them are refreshed on the plugin's own schedule, so how often TAB, holograms or
+ * scoreboards ask has no effect on the database.
  *
  * <pre>
  * %gearscore_total%         total score
@@ -87,7 +88,7 @@ public final class GearScoreExpansion extends PlaceholderExpansion {
                 if (lookups == null) {
                     return fallback;
                 }
-                int position = lookups.position(record.uuid(), record.score());
+                int position = lookups.position(record.uuid());
                 return position > 0 ? Integer.toString(position) : fallback;
             }
             default -> {

@@ -39,6 +39,13 @@ public final class Metrics {
     public final LongAdder readsRejected = new LongAdder();
     public final LongAdder databaseFailures = new LongAdder();
 
+    /** Batched reads sent by a query server to refresh the official scores of its players. */
+    public final LongAdder remoteRefreshes = new LongAdder();
+    /** Official scores stored or replaced in a query server's cache. */
+    public final LongAdder remoteUpdates = new LongAdder();
+    /** Answers ignored because the session had ended or newer data was already cached. */
+    public final LongAdder remoteDiscarded = new LongAdder();
+
     private final Set<String> unknownEnchantments = ConcurrentHashMap.newKeySet();
 
     public void recordEvaluationTime(long nanos) {

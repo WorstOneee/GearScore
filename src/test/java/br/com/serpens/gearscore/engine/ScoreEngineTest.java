@@ -146,22 +146,135 @@ class ScoreEngineTest {
 
     @Test
     void reloadReevaluatesOnlinePlayersGradually() {
-        for (int i = 0; i < 50; i++) {
+        // Every tracked player has equipment, so each processed entry is one recalculation
+        // and the counts below do not depend on the order entries are taken.
+        inventories.put(player, netherite("netherite_sword"));
+        engine.evaluateNow(player);
+        for (int i = 0; i < 49; i++) {
             UUID id = UUID.randomUUID();
             engine.track(id, "P" + i);
             inventories.put(id, netherite("netherite_sword"));
             engine.evaluateNow(id);
         }
+        assertEquals(50, engine.trackedCount());
         long before = metrics.evaluations.sum();
+        assertEquals(50, before);
+        int oldScore = engine.cached(player).record().score();
+
         RuleSet doubled = TestRules.with(config -> config.set("enchantments.category-multipliers.combat", 2.0));
         engine.setRules(doubled);
         engine.requestAll(tick, DEBOUNCE);
+        assertEquals(50, engine.pendingEvaluations());
+        assertEquals(before, metrics.evaluations.sum(), "nothing is recalculated by the reload itself");
+
         tick += DEBOUNCE;
-        // Nothing is recalculated at once: at most the per-tick limit.
+        // First tick after the debounce: exactly the per-tick limit, no more.
         assertEquals(20, engine.tick(tick, 20));
         assertEquals(before + 20, metrics.evaluations.sum());
-        advance(5);
+        assertEquals(30, engine.pendingEvaluations());
+        tick++;
+        assertEquals(20, engine.tick(tick, 20));
+        tick++;
+        assertEquals(10, engine.tick(tick, 20));
         assertEquals(before + 50, metrics.evaluations.sum());
+        assertFalse(engine.hasPending());
+        assertTrue(engine.cached(player).record().score() > oldScore, "new rules applied");
+        assertEquals(0, metrics.unchanged.sum(), "same gear is still recalculated after a rules change");
+    }
+
+    @Test
+    void playerWithoutCaptureUsesAQueueSlotButIsNotRecalculated() {
+        // The base player has no snapshot (e.g. ignored world).
+        engine.request(player, tick, DEBOUNCE);
+        tick += DEBOUNCE;
+        assertEquals(1, engine.tick(tick, 20));
+        assertEquals(0, metrics.captures.sum());
+        assertEquals(0, metrics.evaluations.sum());
+        assertNull(engine.cached(player));
+    }
+
+    @Test
+    void requeueAfterImmediateEvaluationWaitsItsOwnDebounce() {
+        inventories.put(player, netherite("netherite_sword"));
+        engine.request(player, tick, DEBOUNCE);
+        advance(4);
+        // e.g. the quit path evaluating right away while a request was pending
+        engine.evaluateNow(player);
+        assertEquals(1, metrics.evaluations.sum());
+        assertFalse(engine.isPending(player));
+
+        inventories.put(player, netherite("iron_sword"));
+        engine.request(player, tick, DEBOUNCE);
+        // The first request would have come due here (tick 10); it must not fire the new one.
+        advance(DEBOUNCE - 4);
+        assertEquals(1, metrics.evaluations.sum());
+        assertTrue(engine.isPending(player));
+        advance(3);
+        assertEquals(1, metrics.evaluations.sum());
+        advance(1);
+        assertEquals(2, metrics.evaluations.sum());
+        assertFalse(engine.hasPending());
+    }
+
+    @Test
+    void forgetAndRejoinDoesNotInheritTheOldSchedule() {
+        inventories.put(player, netherite("netherite_sword"));
+        engine.request(player, tick, DEBOUNCE);
+        advance(8);
+        engine.forget(player);
+        engine.track(player, "Zwo");
+        engine.request(player, tick, DEBOUNCE);
+        advance(2);
+        assertNull(engine.cached(player), "the entry of the previous session came due and must be ignored");
+        advance(DEBOUNCE - 3);
+        assertNull(engine.cached(player));
+        advance(1);
+        assertNotNull(engine.cached(player));
+        assertEquals(1, metrics.evaluations.sum());
+    }
+
+    @Test
+    void debounceChangeKeepsPendingEntriesAndOrdersByDueTick() {
+        UUID early = UUID.randomUUID();
+        UUID late = UUID.randomUUID();
+        for (UUID id : List.of(early, late)) {
+            engine.track(id, id.toString().substring(0, 8));
+            inventories.put(id, netherite("netherite_sword"));
+        }
+        // Queued under a long debounce, then the reload shortens it.
+        engine.request(late, tick, 40);
+        advance(2);
+        engine.request(early, tick, 5);
+        // A repeated request for the pending player is still merged, not rescheduled.
+        assertFalse(engine.request(late, tick, 5));
+
+        advance(5);
+        assertNotNull(engine.cached(early), "a shorter debounce is not held back by an older entry");
+        assertNull(engine.cached(late));
+        advance(32);
+        assertNull(engine.cached(late));
+        advance(1);
+        assertNotNull(engine.cached(late));
+        assertEquals(2, metrics.evaluations.sum());
+    }
+
+    @Test
+    void lateDatabaseAnswerFromAPreviousSessionIsIgnored() {
+        long oldSession = engine.track(player, "Zwo");
+        engine.forget(player);
+        long newSession = engine.track(player, "Zwo");
+        assertTrue(newSession != oldSession);
+
+        PlayerRecord stale = new PlayerRecord(player, "Zwo", 1, 1, 0, "iniciante", "newera", 1, 5L);
+        engine.seedPersisted(player, oldSession, stale);
+        assertNull(engine.cached(player), "answer for the ended session must not populate the cache");
+        engine.seedPersisted(player, newSession, stale);
+        assertSame(stale, engine.cached(player).record());
+
+        // After the player left for good, nothing is stored at all.
+        engine.forget(player);
+        engine.seedPersisted(player, newSession, stale);
+        assertNull(engine.cached(player));
     }
 
     @Test
@@ -172,8 +285,8 @@ class ScoreEngineTest {
 
         // The player reconnects with the same gear: the row already holds this result.
         engine.forget(player);
-        engine.track(player, "Zwo");
-        engine.seedPersisted(player, stored);
+        long session = engine.track(player, "Zwo");
+        engine.seedPersisted(player, session, stored);
         assertSame(stored, engine.cached(player).record());
         clock = 99_000L;
         engine.evaluateNow(player);
@@ -188,8 +301,8 @@ class ScoreEngineTest {
         engine.evaluateNow(player);
         PlayerRecord stored = written.get(0);
         engine.forget(player);
-        engine.track(player, "Zwo");
-        engine.seedPersisted(player, new PlayerRecord(player, "Zwo", stored.score(), stored.armorScore(),
+        long session = engine.track(player, "Zwo");
+        engine.seedPersisted(player, session, new PlayerRecord(player, "Zwo", stored.score(), stored.armorScore(),
                 stored.weaponScore(), stored.tier(), "newera", stored.rulesVersion() - 1, 5L));
         engine.evaluateNow(player);
         assertEquals(2, written.size());

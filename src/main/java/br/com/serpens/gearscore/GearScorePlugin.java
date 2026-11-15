@@ -9,6 +9,7 @@ import br.com.serpens.gearscore.config.Messages;
 import br.com.serpens.gearscore.config.RuleParser;
 import br.com.serpens.gearscore.config.Settings;
 import br.com.serpens.gearscore.engine.Metrics;
+import br.com.serpens.gearscore.engine.RemoteScores;
 import br.com.serpens.gearscore.engine.ScoreEngine;
 import br.com.serpens.gearscore.hook.GearScoreExpansion;
 import br.com.serpens.gearscore.model.CachedScore;
@@ -41,10 +42,12 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 
 public final class GearScorePlugin extends JavaPlugin {
@@ -54,7 +57,7 @@ public final class GearScorePlugin extends JavaPlugin {
     }
 
     private final Metrics metrics = new Metrics();
-    private final ConcurrentHashMap<UUID, CachedScore> remoteScores = new ConcurrentHashMap<>();
+    private final Set<UUID> online = new HashSet<>();
 
     private volatile Settings settings;
     private volatile Messages messages;
@@ -66,7 +69,10 @@ public final class GearScorePlugin extends JavaPlugin {
     private WriteQueue writes;
     private LookupService lookups;
     private ScoreEngine engine;
+    private RemoteScores remote;
+    private boolean positionsEnabled;
     private BukkitTask tickTask;
+    private BukkitTask maintenanceTask;
     private long shutdownTimeoutMillis;
 
     @Override
@@ -98,7 +104,7 @@ public final class GearScorePlugin extends JavaPlugin {
             this.lookups = new LookupService(database, repository, metrics,
                     databaseSettings.readerThreads(), databaseSettings.maxQueuedReads(),
                     databaseSettings.offlineCacheMillis(), databaseSettings.offlineCacheSize(),
-                    settings.maxEntries(), settings.topCacheMillis(), settings.positionCacheMillis());
+                    settings.maxEntries(), settings.topCacheMillis(), settings.positionRefreshMillis());
             if (settings.official()) {
                 this.writes = new WriteQueue(database, repository, metrics, getLogger(),
                         databaseSettings.flushIntervalMillis(), databaseSettings.batchSize(),
@@ -117,6 +123,21 @@ public final class GearScorePlugin extends JavaPlugin {
             this.engine = new ScoreEngine(rules, settings.serverName(), this::capture, this::persist, metrics,
                     System::currentTimeMillis);
             getServer().getPluginManager().registerEvents(new GearListener(this), this);
+        } else if (lookups != null) {
+            Database gate = database;
+            LookupService reader = lookups;
+            this.remote = new RemoteScores(new RemoteScores.Loader() {
+                @Override
+                public boolean available() {
+                    return gate.isAvailable();
+                }
+
+                @Override
+                public CompletableFuture<Map<UUID, PlayerRecord>> load(List<UUID> ids) {
+                    return reader.loadByUuids(ids);
+                }
+            }, metrics, settings.remoteRecheckMillis(), settings.remoteIntervalMillis(),
+                    settings.remoteBatchSize(), settings.remoteMaxBatches());
         }
         getServer().getPluginManager().registerEvents(new ConnectionListener(this), this);
 
@@ -129,6 +150,7 @@ public final class GearScorePlugin extends JavaPlugin {
 
         if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
             new GearScoreExpansion(this).register();
+            this.positionsEnabled = lookups != null;
             getLogger().info("PlaceholderAPI expansion registered.");
         }
 
@@ -147,6 +169,10 @@ public final class GearScorePlugin extends JavaPlugin {
         if (tickTask != null) {
             tickTask.cancel();
             tickTask = null;
+        }
+        if (maintenanceTask != null) {
+            maintenanceTask.cancel();
+            maintenanceTask = null;
         }
         if (engine != null) {
             // Plugins are disabled before players are disconnected, so finish what is pending.
@@ -188,7 +214,9 @@ public final class GearScorePlugin extends JavaPlugin {
         Settings current = this.settings;
         this.settings = new Settings(current.serverName(), current.official(), loaded.debounceTicks(),
                 loaded.maxPerTick(), loaded.ignoredWorlds(), loaded.pageSize(), current.maxEntries(),
-                current.topCacheMillis(), current.positionCacheMillis(), loaded.fallback());
+                current.topCacheMillis(), current.positionRefreshMillis(), loaded.fallback(),
+                current.remoteIntervalMillis(), current.remoteRecheckMillis(), current.remoteBatchSize(),
+                current.remoteMaxBatches());
         this.messages = loadedMessages;
         this.rules = parsed;
         this.tierViews = renderTiers(parsed);
@@ -280,25 +308,34 @@ public final class GearScorePlugin extends JavaPlugin {
 
     public void handleJoin(Player player) {
         UUID id = player.getUniqueId();
+        online.add(id);
         if (engine != null) {
-            engine.track(id, player.getName());
+            long session = engine.track(id, player.getName());
             requestEvaluation(id);
+            if (lookups != null) {
+                seedFromDatabase(id, session);
+            }
+        } else if (remote != null) {
+            long now = System.currentTimeMillis();
+            remote.open(id, now);
+            remote.poll(now);
         }
-        if (lookups == null) {
-            return;
+        if (positionsEnabled) {
+            lookups.trackPosition(id);
         }
+        ensureMaintenance();
+    }
+
+    // Official source: learn what is stored so an identical result is not written again.
+    // The score itself comes from the local evaluation, so a failed read costs at most one
+    // redundant write.
+    private void seedFromDatabase(UUID id, long session) {
         lookups.loadByUuid(id).whenComplete((record, error) -> {
             if (error != null || record == null || !isEnabled()) {
                 return;
             }
             try {
-                getServer().getScheduler().runTask(this, () -> {
-                    if (engine != null) {
-                        engine.seedPersisted(id, record);
-                    } else if (Bukkit.getPlayer(id) != null) {
-                        remoteScores.put(id, new CachedScore(record, null));
-                    }
-                });
+                getServer().getScheduler().runTask(this, () -> engine.seedPersisted(id, session, record));
             } catch (IllegalPluginAccessException ignored) {
                 // plugin disabled while the query was running
             }
@@ -307,15 +344,48 @@ public final class GearScorePlugin extends JavaPlugin {
 
     public void handleQuit(Player player) {
         UUID id = player.getUniqueId();
+        online.remove(id);
         if (engine != null) {
             if (engine.isPending(id)) {
                 engine.evaluateNow(id);
             }
             engine.forget(id);
         }
-        remoteScores.remove(id);
+        if (remote != null) {
+            remote.close(id);
+        }
         if (lookups != null) {
             lookups.forget(id);
+        }
+    }
+
+    // ---- periodic database refreshes -----------------------------------------------------
+
+    // One task, once per second, alive only while players are online and there is something
+    // to refresh: official scores on a query server, or ranking positions for placeholders.
+    // It never looks at inventories; the reads it starts run on the database threads.
+    private void ensureMaintenance() {
+        if (maintenanceTask == null && needsMaintenance()) {
+            maintenanceTask = getServer().getScheduler().runTaskTimer(this, this::maintain, 20L, 20L);
+        }
+    }
+
+    private boolean needsMaintenance() {
+        return !online.isEmpty() && (remote != null || positionsEnabled);
+    }
+
+    private void maintain() {
+        if (!needsMaintenance()) {
+            maintenanceTask.cancel();
+            maintenanceTask = null;
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (remote != null) {
+            remote.poll(now);
+        }
+        if (positionsEnabled) {
+            lookups.refreshPositions(now);
         }
     }
 
@@ -323,7 +393,7 @@ public final class GearScorePlugin extends JavaPlugin {
 
     /** Cached score of an online player. Never touches the database or an inventory. */
     public CachedScore cached(UUID id) {
-        CachedScore score = engine != null ? engine.cached(id) : remoteScores.get(id);
+        CachedScore score = engine != null ? engine.cached(id) : remote != null ? remote.get(id) : null;
         if (score != null) {
             metrics.cacheHits.increment();
         } else {
@@ -359,6 +429,10 @@ public final class GearScorePlugin extends JavaPlugin {
 
     public ScoreEngine engine() {
         return engine;
+    }
+
+    public RemoteScores remote() {
+        return remote;
     }
 
     public LookupService lookups() {

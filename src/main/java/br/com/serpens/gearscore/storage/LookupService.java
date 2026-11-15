@@ -4,6 +4,7 @@ import br.com.serpens.gearscore.engine.Metrics;
 import br.com.serpens.gearscore.model.PlayerRecord;
 
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -40,12 +42,10 @@ public final class LookupService {
     private record CachedLookup(PlayerRecord record, long loadedAt) {
     }
 
-    private static final class Position {
-        volatile int value = -1;
-        volatile int score = Integer.MIN_VALUE;
-        volatile long loadedAt;
-        volatile boolean loading;
-    }
+    /** Value kept for a tracked player whose position is not known yet. */
+    private static final Integer UNKNOWN = 0;
+    /** Players per position refresh; larger populations are covered over successive cycles. */
+    private static final int POSITION_BATCH = 500;
 
     private final Database database;
     private final ScoreRepository repository;
@@ -54,12 +54,17 @@ public final class LookupService {
     private final long lookupCacheMillis;
     private final int topLimit;
     private final long topCacheMillis;
-    private final long positionCacheMillis;
+    private final long positionRefreshMillis;
 
     private final LinkedHashMap<String, CachedLookup> lookupCache;
     private final ConcurrentHashMap<String, CompletableFuture<Optional<PlayerRecord>>> lookupsInFlight =
             new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<UUID, Position> positions = new ConcurrentHashMap<>();
+    // Holds an entry only for players online on this server.
+    private final ConcurrentHashMap<UUID, Integer> positions = new ConcurrentHashMap<>();
+    private final AtomicBoolean positionsLoading = new AtomicBoolean();
+    private volatile boolean positionRequested;
+    private long lastPositionRefresh = Long.MIN_VALUE / 2;
+    private int positionCursor;
 
     private final Object topLock = new Object();
     private volatile TopSnapshot top;
@@ -67,14 +72,14 @@ public final class LookupService {
 
     public LookupService(Database database, ScoreRepository repository, Metrics metrics,
                          int threads, int maxQueued, long lookupCacheMillis, int lookupCacheSize,
-                         int topLimit, long topCacheMillis, long positionCacheMillis) {
+                         int topLimit, long topCacheMillis, long positionRefreshMillis) {
         this.database = database;
         this.repository = repository;
         this.metrics = metrics;
         this.lookupCacheMillis = lookupCacheMillis;
         this.topLimit = Math.max(1, topLimit);
         this.topCacheMillis = topCacheMillis;
-        this.positionCacheMillis = positionCacheMillis;
+        this.positionRefreshMillis = positionRefreshMillis;
 
         int size = Math.max(1, threads);
         AtomicInteger counter = new AtomicInteger();
@@ -120,6 +125,12 @@ public final class LookupService {
     /** One primary-key read, used when a player joins. Completes with null when there is no row. */
     public CompletableFuture<PlayerRecord> loadByUuid(UUID uuid) {
         return query(connection -> repository.findByUuid(connection, uuid));
+    }
+
+    /** One primary-key query for a group of players; those without a row are absent from the map. */
+    public CompletableFuture<Map<UUID, PlayerRecord>> loadByUuids(List<UUID> uuids) {
+        List<UUID> ids = List.copyOf(uuids);
+        return query(connection -> repository.findByUuids(connection, ids));
     }
 
     /** Lookup by last known name for players that are not online on this server. */
@@ -173,6 +184,8 @@ public final class LookupService {
                         }
                         TopSnapshot fresh = new TopSnapshot(List.copyOf(rows), System.currentTimeMillis(), index);
                         top = fresh;
+                        // Same order as the list just read, so online players agree with it at once.
+                        index.forEach(positions::replace);
                         return fresh;
                     })
                     .exceptionallyCompose(error -> current != null
@@ -190,40 +203,71 @@ public final class LookupService {
         }
     }
 
-    /**
-     * Ranking position without blocking: answers from memory and, when the value is missing
-     * or expired, starts one background refresh for that player.
-     *
-     * @return 1-based position, or -1 while unknown
-     */
-    public int position(UUID uuid, int score) {
-        long now = System.currentTimeMillis();
-        TopSnapshot snapshot = top;
-        if (snapshot != null && now - snapshot.loadedAt() < topCacheMillis) {
-            Integer listed = snapshot.positions().get(uuid);
-            if (listed != null) {
-                return listed;
-            }
-        }
-        Position position = positions.computeIfAbsent(uuid, key -> new Position());
-        boolean expired = position.score != score || now - position.loadedAt >= positionCacheMillis;
-        if (expired && !position.loading) {
-            position.loading = true;
-            position.score = score;
-            query(connection -> repository.position(connection, score)).whenComplete((value, error) -> {
-                if (error == null) {
-                    position.value = value;
-                }
-                // A failed attempt also waits for the cache window before trying again.
-                position.loadedAt = System.currentTimeMillis();
-                position.loading = false;
-            });
-        }
-        return position.value;
+    /** Starts keeping a ranking position for a player who is online on this server. */
+    public void trackPosition(UUID uuid) {
+        positions.putIfAbsent(uuid, UNKNOWN);
     }
 
     public void forget(UUID uuid) {
         positions.remove(uuid);
+    }
+
+    /**
+     * Ranking position from memory. Never queries, schedules or waits: it only notes that
+     * positions are in use, which lets {@link #refreshPositions(long)} run on its own clock.
+     *
+     * @return 1-based position, or -1 while unknown
+     */
+    public int position(UUID uuid) {
+        positionRequested = true;
+        Integer position = positions.get(uuid);
+        return position == null || position.intValue() == 0 ? -1 : position;
+    }
+
+    /**
+     * Refreshes the positions of the tracked players with one batched read. Meant to be
+     * called periodically from the server thread; it does nothing unless positions were
+     * requested since the last refresh, the interval has elapsed, the database is reachable
+     * and no refresh is running. How often placeholders are read has no effect on how often
+     * this queries.
+     *
+     * @return true when a refresh was started
+     */
+    public boolean refreshPositions(long now) {
+        if (!positionRequested || positions.isEmpty() || now - lastPositionRefresh < positionRefreshMillis
+                || !database.isAvailable() || !positionsLoading.compareAndSet(false, true)) {
+            return false;
+        }
+        lastPositionRefresh = now;
+        positionRequested = false;
+        List<UUID> ids = new ArrayList<>(positions.keySet());
+        if (ids.size() > POSITION_BATCH) {
+            int start = positionCursor % ids.size();
+            List<UUID> window = new ArrayList<>(POSITION_BATCH);
+            for (int i = 0; i < POSITION_BATCH; i++) {
+                window.add(ids.get((start + i) % ids.size()));
+            }
+            positionCursor = (start + POSITION_BATCH) % ids.size();
+            ids = window;
+        }
+        List<UUID> batch = ids;
+        query(connection -> repository.positions(connection, batch)).whenComplete((found, error) -> {
+            if (error == null) {
+                for (UUID id : batch) {
+                    Integer position = found.get(id);
+                    // replace() only touches players still tracked, so a late answer cannot
+                    // bring back someone who already left.
+                    positions.replace(id, position == null ? UNKNOWN : position);
+                }
+            }
+            positionsLoading.set(false);
+        });
+        return true;
+    }
+
+    /** Players whose position is being kept. */
+    int trackedPositions() {
+        return positions.size();
     }
 
     public int queuedReads() {

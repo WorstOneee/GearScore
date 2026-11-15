@@ -39,6 +39,28 @@ server:
     - "newera"
 
 # ----------------------------------------------------------------------------
+#  Atualização nos servidores de consulta (hub, eventos...)
+# ----------------------------------------------------------------------------
+# Só vale para instâncias que NÃO são origem oficial. Elas nunca leem
+# inventários: apenas buscam no banco a pontuação oficial dos jogadores que
+# estão online nelas, em consultas agrupadas por chave primária.
+#
+# Quando o jogador troca de servidor, o destino costuma consultar o banco
+# ANTES de a origem gravar o último resultado. Por isso a leitura é repetida:
+#   1. ao entrar;
+#   2. "join-recheck-seconds" depois (deve ser maior que o
+#      writes.flush-interval-ms da origem, definido em database.yml);
+#   3. a cada "interval-seconds" enquanto o jogador estiver online, o que
+#      também corrige leituras que falharam ou jogadores ainda sem registro.
+query-refresh:
+  interval-seconds: 30
+  join-recheck-seconds: 5
+  # Jogadores por consulta e consultas por ciclo (1 ciclo por segundo).
+  # O excedente fica para os ciclos seguintes.
+  batch-size: 100
+  max-batches-per-cycle: 3
+
+# ----------------------------------------------------------------------------
 #  Avaliação e desempenho
 # ----------------------------------------------------------------------------
 evaluation:
@@ -297,6 +319,8 @@ tiers:
 # O ranking mostra o ÚLTIMO equipamento avaliado de cada jogador (com a data
 # da atualização). Não é um recorde histórico: se o jogador trocar para um
 # equipamento pior, a pontuação dele cai.
+# Ordem (a mesma no /gs top e na posição individual): maior pontuação;
+# em caso de empate, quem atingiu a pontuação primeiro; por fim, o UUID.
 ranking:
   page-size: 10
   # Quantidade máxima de registros lidos do banco. A tabela inteira nunca é
@@ -305,9 +329,12 @@ ranking:
   # O resultado é compartilhado entre todos que abrem o ranking durante
   # este tempo (segundos).
   cache-seconds: 30
-  # Validade da posição individual usada no placeholder de quem está fora
-  # do topo (segundos).
-  position-cache-seconds: 120
+  # Intervalo (segundos) entre as atualizações das posições usadas por
+  # %gearscore_position%. O placeholder só lê a memória; quem consulta o
+  # banco é este ciclo: uma leitura agrupada para os jogadores online neste
+  # servidor, e somente enquanto o placeholder estiver em uso. A frequência
+  # com que o TAB ou os hologramas pedem o valor não muda este intervalo.
+  position-refresh-seconds: 60
 
 # ----------------------------------------------------------------------------
 #  PlaceholderAPI

@@ -4,6 +4,7 @@ import br.com.serpens.gearscore.GearScorePlugin;
 import br.com.serpens.gearscore.bukkit.SnapshotFactory;
 import br.com.serpens.gearscore.config.Messages;
 import br.com.serpens.gearscore.engine.Metrics;
+import br.com.serpens.gearscore.engine.RemoteScores;
 import br.com.serpens.gearscore.engine.ScoreEngine;
 import br.com.serpens.gearscore.model.CachedScore;
 import br.com.serpens.gearscore.model.PlayerRecord;
@@ -311,6 +312,13 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
             line(sender, " <gray>Tempo por leitura+cálculo: média <white>" + String.format(Locale.ROOT, "%.1f", average)
                     + " µs<gray>, máximo <white>"
                     + String.format(Locale.ROOT, "%.1f", m.maxEvaluationNanos.get() / 1000.0) + " µs");
+        }
+        RemoteScores remote = plugin.remote();
+        if (remote != null) {
+            line(sender, " <gray>Jogadores com pontuação oficial em cache: <white>" + remote.size());
+            line(sender, " <gray>Atualizações do banco: <white>" + m.remoteRefreshes.sum()
+                    + " <gray>consultas agrupadas, <white>" + m.remoteUpdates.sum()
+                    + " <gray>aplicadas, <white>" + m.remoteDiscarded.sum() + " <gray>descartadas (atrasadas)");
         }
         line(sender, " <gray>Cache: <white>" + m.cacheHits.sum() + " <gray>acertos, <white>" + m.cacheMisses.sum()
                 + " <gray>faltas");
