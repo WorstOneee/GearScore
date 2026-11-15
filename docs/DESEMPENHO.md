@@ -8,7 +8,7 @@ foi efetivamente medido.
 > | Ambiente | Situação |
 > |---|---|
 > | Servidor Paper real, com jogadores reais ou bots | **não executado** |
-> | MariaDB real | **executado na versão 3.0.1**: MariaDB 10.4.32 local, a suíte completa (133 testes, incluindo a recuperação de gravações), planos e tempos das consultas, e o driver embutido no JAR |
+> | MariaDB real | **executado na versão 3.0.2**: MariaDB 10.4.32 local, a suíte completa (138 testes, incluindo a recuperação de gravações), planos e tempos das consultas; o driver embutido no JAR foi verificado na 3.0.1 |
 > | TAB do proxy via TAB-Bridge | **não executado** (sem acesso à rede) |
 > | Simulação em JVM, sem Paper | **executado**: fila de avaliações, cálculo, cache, atualização dos servidores de consulta |
 >
@@ -102,7 +102,7 @@ A correção da recuperação de gravações acrescenta:
 | Tarefa de reenvio | a mesma tarefa de 1 s das atualizações; em servidor oficial ela só existe enquanto há gravação na fila ou resultado devendo, e reenvia no máximo 50 por execução, a partir da memória |
 | Confirmação | um aviso por linha gravada, na thread de gravação |
 | Gravação condicional no banco | a comparação de `updated_at` dentro do mesmo `INSERT ... ON DUPLICATE KEY UPDATE`; nenhuma consulta a mais |
-| Arquivo de pendências | escrito na thread de gravação: no máximo a cada 30 s durante uma queda do banco e uma vez no encerramento; nunca em operação normal |
+| Arquivo de pendências | escrito na thread de gravação: no máximo a cada 30 s durante uma queda do banco e uma vez no encerramento; nunca em operação normal. Na inicialização, os registros lidos que não cabem na fila ficam em uma lista de espera limitada a `writes.max-pending` |
 
 Nada disso acessa banco ou disco na thread principal, nem lê inventários.
 

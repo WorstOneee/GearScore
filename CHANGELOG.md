@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.0.2
+
+### Fixed
+
+* **Pending file restored into a full queue.** On start-up, records read from
+  `pending-writes.dat` were skipped when the write queue had no room, and the
+  file was later rewritten from the queue alone or deleted, so those records
+  were lost without being counted. They now wait in a bounded backlog, enter
+  the queue as room appears and stay in the file until then, across another
+  restart too.
+* The file is read whole; records beyond what the queue and the backlog can
+  hold are counted as lost and logged instead of being left unread.
+* `/gs diag` shows how many records from the file are still waiting.
+
 ## 3.0.1
 
 ### Fixed

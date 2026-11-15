@@ -132,7 +132,7 @@ clocked step, so a faster TAB or hologram refresh never means more queries.
 ./mvnw clean package
 ```
 
-The plugin JAR is written to `target/GearScore-3.0.1.jar`. MariaDB Connector/J
+The plugin JAR is written to `target/GearScore-3.0.2.jar`. MariaDB Connector/J
 and the connection pool are shaded into it.
 
 ```bash

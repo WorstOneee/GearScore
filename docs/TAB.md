@@ -58,7 +58,7 @@ Enquanto o dado não está disponível, todos devolvem `—`
 | Velocity | TAB | já instalado |
 | New Era, hub, eventos | TAB-Bridge | já instalado; não tem arquivo de configuração |
 | New Era, hub, eventos | PlaceholderAPI | já instalado |
-| New Era, hub, eventos | GearScore 3.0.1 | a expansão do PlaceholderAPI é registrada sozinha |
+| New Era, hub, eventos | GearScore 3.0.2 | a expansão do PlaceholderAPI é registrada sozinha |
 
 Nada é instalado no proxy além do TAB que já existe. O GearScore não depende
 do TAB: sem ele, o plugin funciona normalmente.

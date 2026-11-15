@@ -236,11 +236,20 @@ confirmadas, para que sobrevivam a um reinício.
 | banco fora do ar | o conteúdo da fila é regravado no arquivo, no máximo a cada 30 s |
 | encerramento do servidor | o que está pendente é salvo antes da última tentativa de gravação; ao final, o arquivo fica só com o que não foi confirmado |
 | fila esvaziada com sucesso | o arquivo é apagado |
-| inicialização | o arquivo é lido fora da thread principal e os registros entram na fila, sem substituir resultados mais novos |
+| inicialização | o arquivo é lido fora da thread principal; os registros entram na fila **conforme surge lugar**, sem substituir resultados mais novos |
 
-O arquivo é sempre reescrito por inteiro a partir da fila (por isso não
-cresce) e nunca tem mais registros que `writes.max-pending`. A leitura e a
-escrita acontecem na thread de gravação do banco, nunca na thread principal.
+Na inicialização, os registros que não cabem na fila ficam em uma lista de
+espera e **continuam no arquivo** até entrarem. Enquanto houver registro
+esperando, o arquivo não é apagado, e toda regravação inclui a lista de espera
+junto com a fila. Assim, uma fila já ocupada por atualizações novas, ou um novo
+reinício, não faz esses registros sumirem.
+
+Capacidade: a fila guarda até `writes.max-pending` jogadores e a lista de
+espera outros `writes.max-pending`. O arquivo é sempre reescrito por inteiro a
+partir dessas duas estruturas (por isso não cresce além disso). Se um arquivo
+trouxer mais do que cabe, o excedente mais antigo é descartado, contado em
+"perdidas" e avisado no console. A leitura e a escrita acontecem na thread de
+gravação do banco, nunca na thread principal.
 
 ### Garantias e limites
 
@@ -250,6 +259,9 @@ escrita acontecem na thread de gravação do banco, nunca na thread principal.
 | jogador saiu com gravação pendente ou recusada | gravado quando houver lugar e banco |
 | banco fora do ar, servidor continua ligado | gravado quando o banco volta |
 | encerramento normal com pendências | salvo em disco e gravado na próxima inicialização |
+| inicialização com a fila já cheia de atualizações novas | os registros do arquivo esperam e entram quando surge lugar |
+| novo reinício com registros ainda esperando | permanecem no arquivo |
+| arquivo com mais registros do que fila + lista de espera | o excedente mais antigo é perdido e contado |
 | queda do servidor (sem encerramento normal) | recupera o que estava no arquivo, com até 30 s de defasagem; se o banco estava normal, não havia arquivo e o que estava na fila (até `flush-interval-ms`) se perde |
 | fila cheia só de jogadores que já saíram | o mais antigo é perdido e contado |
 | arquivo de pendências danificado ou apagado | linhas ilegíveis são ignoradas |
@@ -265,12 +277,12 @@ disco.
 ### Diagnóstico
 
 `/gs diag` mostra: gravações na fila, aguardando reenvio, recusadas por fila
-cheia, retiradas da fila, reenviadas, perdidas, e os salvamentos, recuperações
-e erros do arquivo de pendências.
+cheia, retiradas da fila, reenviadas, perdidas, e, do arquivo de pendências, os
+salvamentos, os registros aguardando lugar, as recuperações e os erros.
 
 ## Compatibilidade
 
-* Testado em MariaDB 10.4.32 (suíte completa na versão 3.0.1). Colunas geradas
+* Testado em MariaDB 10.4.32 (suíte completa na versão 3.0.2). Colunas geradas
   indexadas exigem MariaDB 10.2.3+ ou MySQL 5.7+.
 * MySQL e versões mais novas do MariaDB não foram testados.
 * O método de autenticação PARSEC (MariaDB 11.6+) não é suportado pelo driver
