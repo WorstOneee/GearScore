@@ -18,14 +18,13 @@ public final class PoolFactory {
 
     public static Database create(DatabaseSettings settings, Logger logger, Metrics metrics) {
         HikariConfig config = new HikariConfig();
-        boolean mariadb = settings.driver().equals("mariadb");
-        String url = "jdbc:" + (mariadb ? "mariadb" : "mysql") + "://" + settings.host() + ":" + settings.port()
-                + "/" + settings.database();
+        // MariaDB Connector/J is the only driver, and it is shaded into the plugin JAR.
+        String url = "jdbc:mariadb://" + settings.host() + ":" + settings.port() + "/" + settings.database();
         if (!settings.parameters().isBlank()) {
             url += "?" + settings.parameters();
         }
         config.setJdbcUrl(url);
-        config.setDriverClassName(mariadb ? org.mariadb.jdbc.Driver.class.getName() : "com.mysql.cj.jdbc.Driver");
+        config.setDriverClassName(org.mariadb.jdbc.Driver.class.getName());
         config.setUsername(settings.username());
         config.setPassword(settings.password());
         config.setPoolName("GearScore");

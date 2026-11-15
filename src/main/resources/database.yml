@@ -10,9 +10,8 @@
 # dos jogadores online, sem ranking e sem persistência.
 enabled: true
 
-# mariadb (driver embutido no plugin; também conecta em MySQL)
-# mysql   (usa o driver MySQL fornecido pelo próprio Paper)
-driver: mariadb
+# O driver MariaDB Connector/J vem embutido no JAR do plugin. Nenhum outro
+# driver é usado nem precisa ser instalado.
 
 host: "127.0.0.1"
 port: 3306

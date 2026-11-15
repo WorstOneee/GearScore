@@ -2,12 +2,10 @@ package br.com.serpens.gearscore.config;
 
 import org.bukkit.configuration.ConfigurationSection;
 
-import java.util.Locale;
-
 /**
  * Connection and persistence settings read from database.yml.
  */
-public record DatabaseSettings(boolean enabled, String driver, String host, int port, String database,
+public record DatabaseSettings(boolean enabled, String host, int port, String database,
                                String username, String password, String parameters, String tablePrefix,
                                int maxConnections, int minIdle, long connectionTimeoutMillis,
                                long maxLifetimeMillis, int readerThreads, int maxQueuedReads,
@@ -20,13 +18,8 @@ public record DatabaseSettings(boolean enabled, String driver, String host, int 
         if (!prefix.matches("[A-Za-z0-9_]{0,32}")) {
             throw new IllegalArgumentException("database.yml: table-prefix may only contain letters, digits and _");
         }
-        String driver = root.getString("driver", "mariadb").trim().toLowerCase(Locale.ROOT);
-        if (!driver.equals("mariadb") && !driver.equals("mysql")) {
-            throw new IllegalArgumentException("database.yml: driver must be mariadb or mysql");
-        }
         return new DatabaseSettings(
                 root.getBoolean("enabled", true),
-                driver,
                 root.getString("host", "127.0.0.1"),
                 root.getInt("port", 3306),
                 root.getString("database", "serpens"),
