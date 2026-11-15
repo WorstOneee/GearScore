@@ -1,5 +1,43 @@
 # Changelog
 
+## 2.0.0
+
+### Changed
+
+* **Scoring covers the whole inventory.** The score is now the sum of every
+  valid piece of gear in the 36 inventory slots, the 4 armor slots and the off
+  hand, each slot once. The "single best weapon" rule is gone; equal items in
+  different slots each count and armor kept in the inventory scores. Ender
+  chest, open containers, cursor, crafting grid and container contents are not
+  read. Snapshots no longer depend on where items sit, so moving or equipping
+  gear causes neither a recalculation nor a write.
+* **Enchantments only score where they belong.** Slot-specific enchantments
+  moved to their own groups (`helmet`, `leggings`, `boots`), so an enchantment
+  forced onto gear that cannot hold it is worth zero. Scoring rules are read
+  from the file as written, without bundled defaults filling in removed
+  entries. Looting, Efficiency and Infinity weigh less.
+* **Tiers** were rescaled for the larger totals and `rules-version` is now 2.
+* **Short messages.** `/gs` and the new `/gs <player>` answer with one line:
+  player, score and tier. Breakdowns moved to `/gs detalhes`, which lists the
+  highest-scoring items with per-enchantment hover text. The origin server and
+  rules version are shown to administrators only. Default colours avoid dark
+  grey.
+* The placeholder fallback is now `—`.
+
+### Added
+
+* `config.yml` and `messages.yml` are updated automatically on first start:
+  untouched sections take the new defaults, customised sections are kept as
+  written, and a timestamped backup is saved first.
+* `docs/TAB.md`: the proxy TAB sidebar through TAB-Bridge.
+
+### Upgrading
+
+Replace the JAR on every server and restart; review the sections the console
+reports as kept. Scores of players who have not joined the official server
+since the update stay on the old scale until they do. See
+`docs/INSTALACAO.md`.
+
 ## 1.1.0
 
 ### Fixed

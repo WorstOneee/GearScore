@@ -1,45 +1,64 @@
 # Fórmula e balanceamento
 
-O GearScore é uma **estimativa da força do equipamento**. Ele não mede habilidade,
-poções, comida, totens nem posicionamento, e não deve ser lido como garantia de
-vitória em PvP.
+O GearScore é uma **estimativa da força dos equipamentos que o jogador
+carrega**. Ele não mede habilidade, poções, comida, totens nem posicionamento.
 
 ## Fórmula
 
 ```
-GearScore = base das armaduras
-          + encantamentos das armaduras
-          + base da melhor arma
-          + encantamentos dessa arma
+GearScore = soma de todos os equipamentos válidos carregados
+equipamento = base (material e tipo) + encantamentos
 ```
 
-Cada uma das quatro parcelas é arredondada para inteiro e o total é a soma delas,
-então o que o `/gearscore` mostra sempre fecha com o detalhamento.
+Internamente a soma é separada em quatro parcelas (base e encantamentos das
+armaduras, base e encantamentos das armas). Cada parcela é somada com casas
+decimais e arredondada uma única vez; o total é a soma das quatro. O que o
+`/gs` mostra sempre fecha com o `/gs detalhes`.
 
 ### O que é lido
 
-| Origem | Slots | Observação |
-|---|---|---|
-| Armadura | capacete, peitoral, calças, botas | só o que está **equipado** |
-| Arma | hotbar (9 slots) e mão secundária | só **uma** arma conta: a de maior pontuação |
+| Lido | Slots |
+|---|---:|
+| Inventário principal, hotbar incluída | 36 |
+| Armadura equipada | 4 |
+| Mão secundária | 1 |
 
-O restante do inventário não é lido. Carregar nove espadas iguais vale o mesmo
-que carregar uma. A arma escolhida aparece no `/gearscore` com o slot onde está.
+* Cada slot é lido **uma vez**. A mão principal é um slot da hotbar e não é
+  contada de novo.
+* Itens iguais em slots diferentes são equipamentos distintos: duas espadas
+  iguais valem o dobro de uma.
+* Armaduras guardadas no inventário pontuam como as equipadas.
+* O lugar do item não importa: mover um equipamento de slot, equipar ou
+  desequipar não muda a pontuação nem gera gravação.
+
+### O que não é lido
+
+Ender Chest, baús e outros contêineres abertos, o item no cursor, a grade de
+criação e o conteúdo de shulkers, bundles ou qualquer recipiente.
+
+### O que é um equipamento válido
+
+Somente os materiais listados em `armor` e `weapons` do `config.yml` e os itens
+personalizados reconhecidos por PDC. Um item é admitido **pelo material**, antes
+de qualquer leitura de encantamento.
+
+Não pontuam, mesmo com encantamentos ou brilho: blocos, comida, recursos,
+livros encantados, ferramentas (picareta, pá, enxada), escudo, vara de pescar e
+qualquer outro item fora da lista. Nome, lore, CustomModelData e brilho visual
+(`enchantment_glint_override`) nunca são lidos.
 
 ### Pontuação de um item
 
 ```
 item = (base + bônus de item personalizado) + soma dos encantamentos
+encantamento = pontos do nível × multiplicador da categoria
 ```
 
 * **base**: `armor.materials.<material>.<slot>` ou `weapons.<tipo>.<material>`,
   multiplicada por `armor.slot-multipliers` / `weapons.type-multipliers`.
-* **encantamento**: `pontos do nível × multiplicador da categoria`.
 * Um item nunca fica abaixo de zero, mesmo com maldições negativas.
 
 ### Pontos por nível
-
-Cada encantamento tem a própria regra, por tipo de equipamento:
 
 ```yaml
 "minecraft:protection": { category: combat, levels: [30, 65, 105, 150] }   # tabela
@@ -47,47 +66,36 @@ Cada encantamento tem a própria regra, por tipo de equipamento:
 ```
 
 * `levels` é uma tabela: nível 1, nível 2, ...
-* `per-level` é a progressão linear. Combinado com `levels`, vale para cada nível
-  além do fim da tabela (usado apenas com `above-max-level: allow`).
+* `per-level` é a progressão linear. Combinado com `levels`, vale para cada
+  nível além do fim da tabela (com `above-max-level: allow`).
 * `max-level` é o limite. Se omitido: tamanho da tabela ou o máximo vanilla.
 
-Não é a quantidade de encantamentos que conta, e sim quais são e em que nível.
+Todos os valores de balanceamento estão no `config.yml`; o código não contém
+pesos.
 
-### Categorias
+### Onde cada encantamento pontua
 
-| Categoria | Uso | Exemplos |
-|---|---|---|
-| `combat` | sempre útil contra jogadores | Proteção, Afiação, Força, Densidade, Ruptura |
-| `conditional` | útil em situações específicas | proteções especializadas, Espinhos, Repulsão, Perfuração |
-| `mob` | especializado em mobs | Julgamento, Ruína dos Artrópodes, Empalamento |
-| `mobility` | mobilidade | Peso-Pena, Passos Profundos, Correnteza, Rajada de Vento |
-| `utility` | durabilidade e utilidade | Inquebrável, Remendo, Infinidade, Saque |
-| `curse` | maldições | Desaparecimento, Ligação |
+Um encantamento só pontua se houver regra para ele **no tipo da peça em que
+está**. A regra é procurada em `enchantments.rules`, da mais específica para a
+mais geral:
 
-`enchantments.category-multipliers` sobe ou desce uma categoria inteira. Exemplo:
-`utility: 0.0` faz Inquebrável e Remendo deixarem de pontuar.
-
-### Ordem de busca das regras
-
-Para cada encantamento de um item, a regra é procurada em
-`enchantments.rules`, da mais específica para a mais geral:
-
-1. o tipo da peça (`helmet`, `boots`, `sword`, `axe`, `mace`, `trident`, `bow`, `crossbow`, `spear`)
+1. o tipo da peça (`helmet`, `chestplate`, `leggings`, `boots`, `sword`, `axe`,
+   `mace`, `trident`, `bow`, `crossbow`, `spear`)
 2. a família (`armor` ou `weapon`)
 3. `any`
 
-Isso permite, por exemplo, dar a Afiação um valor na espada e outro no machado,
-ou pontuar Peso-Pena só nas botas.
+Cada encantamento fica no grupo das peças que realmente podem recebê-lo.
+`any` contém apenas o que todo equipamento aceita (Inquebrável, Remendo e
+Maldição do Desaparecimento). Assim, Peso-Pena forçado em um capacete, Afiação
+em uma mace ou Proteção em uma espada valem **zero**: não existe regra genérica
+que distribua pontos onde o encantamento não se aplica.
 
-### Encantamentos desconhecidos
+Encantamentos sem regra (inclusive os de datapacks e de outros plugins) valem
+zero até serem configurados. O `/gs diag` lista as chaves encontradas sem regra
+e o `/gs detalhes` marca o encantamento.
 
-Um encantamento sem regra para aquele tipo de equipamento vale **zero**
-(inclusive os de datapacks e de outros plugins). O `/gearscore diag` lista as
-chaves que foram encontradas sem regra, e o `/gearscore detalhes` marca o
-encantamento como "não configurado".
-
-Apenas encantamentos reais do item são lidos. Brilho visual
-(`enchantment_glint_override`), nome, lore e CustomModelData não geram pontos.
+As regras são lidas do arquivo exatamente como está escrito: apagar uma linha
+faz o encantamento valer zero, sem que o padrão do plugin volte a preenchê-la.
 
 ### Níveis acima do limite
 
@@ -113,24 +121,83 @@ mesmo grupo:
 
 ### Maldições
 
-Ficam em `enchantments.rules.any` com a categoria `curse`. O valor pode ser
-negativo (penaliza), `0` (neutro) ou positivo. Padrão: −10 cada.
+Valor negativo (penaliza), `0` (neutro) ou positivo. Padrão: −10 cada.
 
 ### Itens personalizados
 
 Opcional (`custom-items.enabled`). Um item só é tratado como especial se tiver a
-chave configurada no **PersistentDataContainer**. Somente as chaves listadas na
-configuração são consultadas.
+chave configurada no **PersistentDataContainer**; somente as chaves listadas são
+consultadas.
 
 ```
 item = (base ou base substituída + bonus + encantamentos) × multiplier
 ```
 
-## Tabela padrão
+## Pesos finais (configuração padrão)
 
-### Base das armaduras
+A prioridade é a força em combate contra jogadores.
 
-| Material | Capacete | Peitoral | Calças | Botas | Conjunto |
+### Armaduras
+
+| Encantamento | Onde | Pontos por nível | Categoria | Por quê |
+|---|---|---|---|---|
+| Proteção | qualquer armadura | 30 / 65 / 105 / 150 | combat | reduz todo tipo de dano; o encantamento mais importante da peça |
+| Proteção contra Explosões | qualquer armadura | 15 / 32 / 52 / 75 | conditional | forte contra cristais e âncoras, inútil contra espada; metade da geral |
+| Proteção contra Projéteis | qualquer armadura | 15 / 32 / 52 / 75 | conditional | só contra arco, besta e tridente |
+| Proteção contra Fogo | qualquer armadura | 12 / 26 / 42 / 60 | conditional | só contra fogo e lava |
+| Espinhos | qualquer armadura | 15 / 30 / 45 | conditional | devolve dano, mas depende de o adversário bater corpo a corpo e gasta a peça |
+| Peso-Pena | botas | 10 / 20 / 30 / 40 | mobility | reduz dano de queda (pérolas, mace, repulsão em altura) |
+| Passos Profundos | botas | 6 / 12 / 18 | mobility | só na água |
+| Passo Furtivo | calças | 6 / 12 / 18 | mobility | só agachado |
+| Velocidade das Almas | botas | 5 / 10 / 15 | mobility | só em areia e terra das almas |
+| Andarilho do Gelo | botas | 4 / 8 | mobility | situacional |
+| Respiração | capacete | 4 / 8 / 12 | utility | só debaixo d'água |
+| Afinidade Aquática | capacete | 5 | utility | coleta debaixo d'água |
+| Maldição da Ligação | qualquer armadura | −10 | curse | |
+
+### Armas
+
+| Encantamento | Onde | Pontos por nível | Categoria | Por quê |
+|---|---|---|---|---|
+| Afiação | espada, machado, lança | 25 / 50 / 80 / 115 / 155 | combat | dano contra qualquer alvo |
+| Densidade | mace | 30 / 60 / 95 / 130 / 170 | combat | multiplica o dano do golpe em queda, a função da mace |
+| Ruptura | mace | 30 / 60 / 90 / 120 | combat | ignora parte da armadura |
+| Rajada de Vento | mace | 20 / 40 / 60 | mobility | reposiciona para novo golpe; não causa dano por si |
+| Aspecto Flamejante | espada, mace, lança | 25 / 45 | combat | dano contínuo e pressão |
+| Repulsão | espada, lança | 12 / 22 | conditional | controle de distância, sem dano |
+| Alcance | espada | 8 / 16 / 24 | conditional | só contra vários alvos |
+| Investida | lança | 15 / 30 / 45 | mobility | aproximação |
+| Julgamento | espada, machado, mace, lança | 6 por nível | mob | só mortos-vivos |
+| Ruína dos Artrópodes | espada, machado, mace, lança | 4 por nível | mob | só artrópodes |
+| Saque | espada, lança | 2 por nível | utility | coleta |
+| Eficiência | machado | 1 por nível | utility | coleta |
+| Toque Suave, Fortuna | machado | 0 | utility | coleta; reconhecidos, sem pontos |
+| Força | arco | 20 / 40 / 65 / 90 / 120 | combat | dano da flecha |
+| Chama | arco | 25 | combat | fogo no alvo |
+| Impacto | arco | 10 / 20 | conditional | empurra, sem dano |
+| Infinidade | arco | 15 | utility | economia de flechas |
+| Carga Rápida | besta | 20 / 40 / 60 | combat | cadência |
+| Perfuração | besta | 8 / 16 / 24 / 32 | conditional | atravessa alvos e escudos |
+| Tiro Múltiplo | besta | 25 | conditional | área |
+| Lealdade | tridente | 15 / 25 / 35 | combat | arma de arremesso reutilizável |
+| Correnteza | tridente | 20 / 35 / 50 | mobility | só na água ou na chuva |
+| Canalização | tridente | 10 | conditional | só em tempestade |
+| Empalamento | tridente | 5 por nível | mob | no Java, só mobs aquáticos |
+
+### Qualquer equipamento
+
+| Encantamento | Pontos | Categoria | Por quê |
+|---|---|---|---|
+| Inquebrável | 5 / 10 / 15 | utility | durabilidade não decide uma luta |
+| Remendo | 12 | utility | idem |
+| Maldição do Desaparecimento | −10 | curse | |
+
+`enchantments.category-multipliers` sobe ou desce uma categoria inteira (por
+exemplo `utility: 0.0` zera Inquebrável e Remendo).
+
+### Bases
+
+| Armadura | Capacete | Peitoral | Calças | Botas | Conjunto |
 |---|---:|---:|---:|---:|---:|
 | Couro | 12 | 21 | 17 | 10 | 60 |
 | Ouro | 18 | 32 | 26 | 14 | 90 |
@@ -140,9 +207,9 @@ item = (base ou base substituída + bonus + encantamentos) × multiplier
 | Diamante | 45 | 75 | 65 | 35 | 220 |
 | Netherita | 55 | 90 | 75 | 45 | 265 |
 
-### Base das armas
+Casco de tartaruga 25 · Élitros 0
 
-| Tipo | Madeira | Ouro | Pedra | Cobre | Ferro | Diamante | Netherita |
+| Arma | Madeira | Ouro | Pedra | Cobre | Ferro | Diamante | Netherita |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Espada | 20 | 22 | 30 | 35 | 45 | 65 | 80 |
 | Machado | 22 | 22 | 32 | 36 | 46 | 62 | 76 |
@@ -150,88 +217,85 @@ item = (base ou base substituída + bonus + encantamentos) × multiplier
 
 Mace 110 · Tridente 90 · Besta 55 · Arco 50
 
-### Encantamentos principais
+## Exemplos calculados
 
-| Equipamento | Encantamento | Pontos por nível |
-|---|---|---|
-| Armadura | Proteção | 30 / 65 / 105 / 150 |
-| Armadura | Prot. contra Explosões, contra Projéteis | 15 / 32 / 52 / 75 |
-| Armadura | Proteção contra Fogo | 12 / 26 / 42 / 60 |
-| Armadura | Espinhos | 15 / 30 / 45 |
-| Armadura | Peso-Pena | 10 / 20 / 30 / 40 |
-| Qualquer | Inquebrável | 5 / 10 / 15 |
-| Qualquer | Remendo | 12 |
-| Espada, machado, lança | Afiação | 25 / 50 / 80 / 115 / 155 |
-| Espada, mace, lança | Aspecto Flamejante | 25 / 45 |
-| Espada, lança | Repulsão | 12 / 22 |
-| Espada | Alcance | 8 / 16 / 24 |
-| Espada, machado, mace, lança | Julgamento | 6 por nível |
-| Espada, machado, mace, lança | Ruína dos Artrópodes | 4 por nível |
-| Mace | Densidade | 30 / 60 / 95 / 130 / 170 |
-| Mace | Ruptura | 30 / 60 / 90 / 120 |
-| Mace | Rajada de Vento | 20 / 40 / 60 |
-| Arco | Força | 20 / 40 / 65 / 90 / 120 |
-| Arco | Chama 25 · Impacto 10 / 20 · Infinidade 30 | |
-| Besta | Carga Rápida | 20 / 40 / 60 |
-| Besta | Perfuração 8 / 16 / 24 / 32 · Tiro Múltiplo 25 | |
-| Tridente | Lealdade 15 / 25 / 35 · Correnteza 20 / 35 / 50 | |
-| Tridente | Canalização 10 · Empalamento 5 por nível | |
+Valores produzidos pela configuração padrão; são impressos pelos testes
+automatizados.
 
-A lista completa está em `config.yml`.
+### Mesmo equipamento, encantamentos diferentes
 
-## Exemplos numéricos
+| Peitoral de netherita (base 90) | Encantamentos | Total |
+|---|---:|---:|
+| sem encantamentos | 0 | **90** |
+| Proteção IV | 150 | **240** |
+| Proteção contra Explosões IV | 75 | **165** |
+| Proteção contra Projéteis IV | 75 | **165** |
+| Proteção contra Fogo IV | 60 | **150** |
+| Espinhos III | 45 | **135** |
+| Inquebrável III + Remendo | 27 | **117** |
+| Proteção IV + Espinhos III + Inquebrável III + Remendo | 222 | **312** |
 
-Valores produzidos pela configuração padrão (são os mesmos casos verificados
-nos testes automatizados).
+| Espada de netherita (base 80) | Encantamentos | Total |
+|---|---:|---:|
+| sem encantamentos | 0 | **80** |
+| Afiação V | 155 | **235** |
+| Aspecto Flamejante II | 45 | **125** |
+| Julgamento V | 30 | **110** |
+| Inquebrável III + Remendo | 27 | **107** |
+| Repulsão II | 22 | **102** |
+| Ruína dos Artrópodes V | 20 | **100** |
+| Saque III | 6 | **86** |
 
-| Equipamento | Base armadura | Enc. armadura | Base arma | Enc. arma | **Total** | Faixa |
-|---|---:|---:|---:|---:|---:|---|
-| Netherita completa, sem encantamentos, sem arma | 265 | 0 | 0 | 0 | **265** | Aprendiz |
-| Ferro completo sem encantamentos + espada de ferro | 140 | 0 | 45 | 0 | **185** | Aprendiz |
-| Diamante Proteção II + espada de diamante Afiação II | 220 | 260 | 65 | 50 | **595** | Guerreiro |
-| Diamante Proteção IV + espada de diamante Afiação V | 220 | 600 | 65 | 155 | **1040** | Elite |
-| Netherita Prot. IV / Inq. III / Remendo + espada de netherita sem encantamentos | 265 | 708 | 80 | 0 | **1053** | Elite |
-| Netherita completa encantada¹ + espada completa² | 265 | 781 | 80 | 282 | **1408** | Mítico |
-| Netherita completa encantada¹ + mace Densidade V / Rajada de Vento III / Inq. III / Remendo | 265 | 781 | 110 | 257 | **1413** | Mítico |
-| Netherita completa encantada¹ + arco Força V / Chama / Impacto II / Infinidade / Inq. III | 265 | 781 | 50 | 210 | **1306** | Lendário |
+| Outros | Encantamentos | Total |
+|---|---:|---:|
+| Mace (110) + Densidade V | 170 | **280** |
+| Mace (110) + Ruptura IV | 120 | **230** |
+| Mace (110) + Rajada de Vento III | 60 | **170** |
+| Arco (50) + Força V | 120 | **170** |
+| Arco (50) + Infinidade | 15 | **65** |
+| Botas de netherita (45) + Peso-Pena IV | 40 | **85** |
+
+### Inventários completos
+
+| Inventário | Armaduras | Armas | **Total** | Faixa |
+|---|---:|---:|---:|---|
+| Ferro completo sem encantamentos + espada de ferro | 140 | 45 | **185** | Iniciante |
+| Diamante Proteção IV + espada de diamante Afiação V | 820 | 220 | **1040** | Guerreiro |
+| Netherita completa encantada¹, sem armas | 1046 | 0 | **1046** | Guerreiro |
+| Netherita completa encantada¹ + espada completa² | 1046 | 359 | **1405** | Veterano |
+| O anterior + machado³ e arco⁴ | 1046 | 862 | **1908** | Elite |
+| Netherita completa encantada¹ + espada, machado, arco, besta⁵, mace⁶ e tridente⁷ | 1046 | 1590 | **2636** | Lendário |
+| O anterior + segunda armadura de netherita com Proteção IV guardada | 1911 | 1590 | **3501** | Mítico |
 
 ¹ Quatro peças com Proteção IV, Inquebrável III e Remendo; botas também com
 Peso-Pena IV, Passos Profundos III e Velocidade das Almas III.
 ² Afiação V, Aspecto Flamejante II, Repulsão II, Alcance III, Saque III,
 Inquebrável III e Remendo.
+³ Netherita, Afiação V, Inquebrável III, Remendo.
+⁴ Força V, Chama, Impacto II, Infinidade, Inquebrável III.
+⁵ Carga Rápida III, Perfuração IV, Inquebrável III, Remendo.
+⁶ Densidade V, Rajada de Vento III, Inquebrável III, Remendo.
+⁷ Lealdade III, Canalização, Empalamento V, Inquebrável III, Remendo.
 
-### Conta passo a passo
+## Faixas
 
-Peitoral de netherita com Proteção IV, Inquebrável III e Remendo:
+| Faixa | A partir de |
+|---|---:|
+| Iniciante | 0 |
+| Aprendiz | 300 |
+| Guerreiro | 700 |
+| Veterano | 1200 |
+| Elite | 1800 |
+| Lendário | 2400 |
+| Mítico | 3000 |
 
-```
-base                    90
-Proteção IV            150   (combat  × 1.0)
-Inquebrável III         15   (utility × 1.0)
-Remendo                 12   (utility × 1.0)
-                       ----
-item                   267
-```
+A escala é maior que a da regra antiga (melhor arma apenas) porque agora tudo o
+que o jogador carrega soma. As faixas foram redefinidas com base nos exemplos
+acima; ajuste `tiers` ao perfil do servidor.
 
-Espada de netherita com Afiação V e Aspecto Flamejante II:
-
-```
-base                    80
-Afiação V              155
-Aspecto Flamejante II   45
-                       ----
-item                   280
-```
-
-### Leituras úteis para ajustar
-
-* Encantamentos dominam: a netherita completa vai de **265** (sem
-  encantamentos) para **973** só com Proteção IV, Inquebrável III e Remendo.
-* Proteção IV em uma peça (150) vale mais que a diferença de base entre
-  diamante e netherita no conjunto inteiro (45).
-* Julgamento V (30) vale cerca de um quinto de Afiação V (155): a espada
-  "de mob" não aparece como forte em PvP.
-* Remendo + Inquebrável III somam 27 por peça, contra 150 de Proteção IV.
+Consequência da regra: quem carrega mais equipamentos válidos pontua mais,
+mesmo que não use todos. Se isso distorcer o ranking, baixe
+`weapons.type-multipliers` dos tipos acumulados ou as bases em `armor.materials`.
 
 ## Como ajustar
 
@@ -242,10 +306,12 @@ item                   280
 | Ignorar durabilidade | `category-multipliers.utility: 0.0` |
 | Mace forte demais no ranking | baixar `weapons.type-multipliers.mace` ou a tabela de `density` |
 | Servidor com níveis acima do vanilla | `above-max-level: allow` e definir `per-level` nos encantamentos |
-| Encantamento de plugin/datapack | adicionar a chave com namespace no grupo do equipamento |
+| Encantamento de plugin/datapack | adicionar a chave com namespace no grupo do equipamento que o recebe |
+| Um item não deve pontuar | adicioná-lo em `evaluation.ignored-items` |
 | Mudar as faixas | `tiers` |
 
 Depois de alterar pesos, aumente `rules-version` e use `/gearscore reload`. Os
-jogadores online são reavaliados aos poucos; os offline são atualizados quando
-entrarem novamente em um servidor de origem oficial. A coluna `rules_version`
-do banco mostra com qual tabela cada pontuação foi calculada.
+jogadores online são reavaliados aos poucos; os offline são recalculados quando
+entrarem novamente no servidor de origem oficial (o plugin não tem acesso ao
+inventário de quem está offline e não estima resultados). A coluna
+`rules_version` do banco mostra com qual tabela cada pontuação foi calculada.

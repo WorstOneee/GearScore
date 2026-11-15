@@ -30,7 +30,7 @@ O driver MariaDB vem embutido no JAR; não há nada a instalar.
 
 ## 2. Instalar o JAR
 
-1. Copie `GearScore-1.1.0.jar` para a pasta `plugins/` de **cada** servidor
+1. Copie `GearScore-2.0.0.jar` para a pasta `plugins/` de **cada** servidor
    Paper que deve mostrar a pontuação (New Era, hub, eventos...).
 2. Inicie o servidor uma vez para gerar `plugins/GearScore/`.
 3. Edite `database.yml` (mesmos dados em todos os servidores) e `config.yml`.
@@ -96,82 +96,93 @@ Na inicialização o console confirma o modo:
 | Comando | Descrição | Permissão | Padrão |
 |---|---|---|---|
 | `/gearscore` ou `/gs` | sua pontuação | `gearscore.use` | todos |
-| `/gs ver <jogador>` | pontuação de outro jogador (online ou offline) | `gearscore.view.others` | todos |
-| `/gs detalhes` | contribuição de cada peça e encantamento | `gearscore.details` | todos |
+| `/gs <jogador>` | pontuação de outro jogador, online ou offline (`/gs ver <jogador>` também funciona) | `gearscore.view.others` | todos |
+| `/gs detalhes` | equipamentos e encantamentos que pontuam | `gearscore.details` | todos |
 | `/gs detalhes <jogador>` | detalhamento de outro jogador online | `gearscore.details.others` | OP |
 | `/gs top [página]` | ranking paginado | `gearscore.top` | todos |
 | `/gs reload` | recarrega `config.yml` e `messages.yml` | `gearscore.admin.reload` | OP |
-| `/gs diag` | contadores de desempenho | `gearscore.admin.diag` | OP |
+| `/gs diag` | diagnóstico técnico | `gearscore.admin.diag` | OP |
 
 `gearscore.admin` concede as três permissões administrativas.
 
-Observações:
+### O que cada comando mostra
 
-* O detalhamento existe apenas para jogadores online em um servidor de origem
-  oficial (é lá que os itens são lidos). Na hub, `/gs` mostra a pontuação
-  oficial com o servidor e a data da atualização.
-* O ranking mostra o **último equipamento avaliado** de cada jogador, com a
-  data. Não é recorde histórico: trocar para um equipamento pior baixa a
-  pontuação.
-* `/gs reload` não recria a conexão com o banco nem muda `server.name`,
-  `official-sources`, `query-refresh` e `ranking`; para isso, reinicie.
+`/gs` e `/gs <jogador>` respondem com uma linha: jogador, pontuação e
+classificação.
+
+```
+GearScore » zWorstOne • 1125 GS • Elite
+```
+
+`/gs detalhes [jogador]` mostra os totais de armaduras e armas (base +
+encantamentos), os equipamentos de maior pontuação (`display.details-max-items`,
+padrão 12; passe o mouse sobre um item para ver cada encantamento) e quando a
+pontuação foi atualizada. O detalhamento existe apenas para jogadores online no
+servidor de origem oficial, que é onde os itens são lidos.
+
+O nome do servidor de origem e a versão das regras **não** aparecem para os
+jogadores. Eles continuam gravados no banco, porque controlam a origem oficial,
+e são exibidos somente em `/gs diag` e em uma linha extra do `/gs detalhes`
+para quem tem `gearscore.admin.diag`.
+
+O plugin só envia mensagens em resposta a comandos. Nenhuma mensagem é enviada
+quando o inventário ou a pontuação muda.
+
+Outras observações:
+
+* O ranking mostra o **último inventário avaliado** de cada jogador. Não é
+  recorde histórico: carregar menos equipamentos baixa a pontuação.
 * No ranking, empates são decididos por quem atingiu a pontuação primeiro e,
-  por fim, pelo UUID. A posição mostrada pelo placeholder segue exatamente
-  essa ordem.
+  por fim, pelo UUID. A posição do placeholder segue exatamente essa ordem.
+* `/gs reload` não recria a conexão com o banco nem muda `server`,
+  `query-refresh` e `ranking`; para isso, reinicie.
 
-## 5. PlaceholderAPI
+### Mensagens
+
+Todos os textos ficam em `messages.yml` (formato MiniMessage) e podem ser
+alterados. As cores padrão evitam cinza escuro.
+
+## 5. PlaceholderAPI e sidebar do TAB
 
 Com o PlaceholderAPI instalado, a expansão é registrada sozinha.
 
 | Placeholder | Valor |
 |---|---|
-| `%gearscore_total%` | pontuação total |
-| `%gearscore_armor%` | pontuação de armadura |
-| `%gearscore_weapon%` | pontuação de arma |
-| `%gearscore_tier%` | nome da faixa, sem cores |
-| `%gearscore_tier_colored%` | nome da faixa com cores (códigos `§`) |
+| `%gearscore_score%` | pontuação total (`%gearscore_total%` é equivalente) |
+| `%gearscore_tier%` | classificação, sem cores |
+| `%gearscore_tier_colored%` | classificação com cores (códigos `§`) |
 | `%gearscore_tier_id%` | id da faixa no `config.yml` |
+| `%gearscore_armor%` | parcela das armaduras |
+| `%gearscore_weapon%` | parcela das armas |
 | `%gearscore_position%` | posição no ranking |
 
-Enquanto o dado não estiver disponível, retorna `placeholders.fallback`
-(padrão `-`).
+Enquanto o dado não estiver disponível, retornam `placeholders.fallback`
+(padrão `—`).
 
-Todos os placeholders, inclusive o de posição, leem **apenas a memória**:
-não consultam o banco, não criam tarefas, não leem inventários, não recalculam
-e não esperam. O plugin **fornece** os valores; quem decide quando redesenhar é
-o TAB, o plugin de hologramas ou o scoreboard. O GearScore não envia pacotes
-nem atualiza essas interfaces por conta própria.
+Todos leem **apenas a memória**: não consultam o banco, não criam tarefas, não
+leem inventários, não recalculam e não esperam. O plugin **fornece** os
+valores; quem decide quando redesenhar é o TAB, o plugin de hologramas ou o
+scoreboard.
 
 As posições são atualizadas por um ciclo próprio, a cada
-`ranking.position-refresh-seconds` (padrão 60 s), com uma leitura agrupada para
-os jogadores online no servidor, e só enquanto `%gearscore_position%` estiver
-em uso. Aumentar a frequência de atualização do TAB ou dos hologramas **não**
-aumenta as consultas ao banco.
+`ranking.position-refresh-seconds` (padrão 60 s), e só enquanto
+`%gearscore_position%` estiver em uso.
 
-Exemplos:
-
-```yaml
-# TAB (config.yml)
-tabsuffix: " &8[&6%gearscore_total%&8]"
-
-# DecentHolograms
-- "&6GearScore: &f%gearscore_total% &7(%gearscore_tier%)"
-```
-
-A posição exibida muda no máximo a cada `ranking.position-refresh-seconds`,
-qualquer que seja o intervalo configurado no TAB ou no plugin de hologramas.
+A integração com a sidebar do TAB no proxy (via TAB-Bridge), com o trecho exato
+de configuração, está em [TAB.md](TAB.md).
 
 ## 6. Verificar
 
-1. Entre no New Era, equipe uma armadura e rode `/gs` e `/gs detalhes`.
-2. Troque de arma na hotbar e rode `/gs` de novo: a arma considerada muda.
-3. Rode `/gs diag`: "Banco: disponível" e "linhas gravadas" maior que zero.
-4. Vá para a hub e rode `/gs`: a pontuação é a mesma, com "em newera". Se
-   aparecer um valor anterior logo ao chegar, ele se corrige em até
-   `join-recheck-seconds`.
-5. Na hub, equipe qualquer item e volte ao New Era: nada foi sobrescrito.
-6. Na hub, `/gs diag` mostra as consultas agrupadas enviadas e quantas
-   respostas foram aplicadas ou descartadas.
+1. Entre no New Era com equipamentos no inventário e rode `/gs` e
+   `/gs detalhes`.
+2. Jogue uma arma no chão e rode `/gs`: a pontuação cai o valor daquela arma.
+   Pegue de volta: o valor retorna.
+3. Mova um equipamento de slot ou equipe uma armadura que estava guardada: a
+   pontuação não muda.
+4. Rode `/gs diag`: "Banco: disponível" e "linhas gravadas" maior que zero.
+5. Vá para a hub e rode `/gs`: a pontuação é a mesma. Se aparecer um valor
+   anterior logo ao chegar, ele se corrige em até `join-recheck-seconds`.
+6. Na hub, pegue qualquer kit e volte ao New Era: nada foi sobrescrito.
 
 ## Compilar
 
@@ -179,7 +190,7 @@ qualquer que seja o intervalo configurado no TAB ou no plugin de hologramas.
 ./mvnw clean package
 ```
 
-O JAR sai em `target/GearScore-1.1.0.jar`. Para rodar o teste de carga
+O JAR sai em `target/GearScore-2.0.0.jar`. Para rodar o teste de carga
 simulado:
 
 ```bash
@@ -193,35 +204,66 @@ teste cria e remove tabelas com prefixo próprio):
 ./mvnw test -Pmariadb "-Dgearscore.test.jdbc=jdbc:mariadb://127.0.0.1:3306/gstest?user=USUARIO&password=SENHA"
 ```
 
-## Atualizando da 1.0.0 para a 1.1.0
+## Atualizando para a 2.0.0
 
-1. **Banco:** nada a fazer manualmente. Na primeira conexão a migração 3
-   adiciona a coluna gerada `rank_score`, cria o índice `idx_rank` e remove o
-   `idx_score`. O usuário do banco precisa de `ALTER` e `INDEX`. Os dados
-   existentes são preservados.
-2. **Atualize todos os servidores.** Uma instância ainda na 1.0.0 continua
-   funcionando sobre o esquema novo, mas ordena o ranking sem índice e mantém
-   os problemas corrigidos nesta versão.
-3. **`config.yml`:** o arquivo existente continua válido. As chaves novas
-   usam o padrão quando ausentes; para ajustá-las, acrescente:
+Vale para quem está na 1.0.0 ou na 1.1.0.
 
-   ```yaml
-   query-refresh:
-     interval-seconds: 30
-     join-recheck-seconds: 5
-     batch-size: 100
-     max-batches-per-cycle: 3
+1. Pare o servidor, troque o JAR por `GearScore-2.0.0.jar` em **todos** os
+   servidores (New Era, hub, eventos) e inicie.
+2. Na primeira inicialização o plugin atualiza `config.yml` e `messages.yml`
+   sozinho:
+   * antes de alterar, salva uma cópia ao lado:
+     `config.yml.bak-AAAAMMDD-HHMMSS` e `messages.yml.bak-AAAAMMDD-HHMMSS`;
+   * cada seção de primeiro nível (`server`, `evaluation`, `enchantments`,
+     `tiers`, `summary`, `prefix`...) que **não foi alterada** recebe o novo
+     padrão;
+   * cada seção que **você alterou** é mantida exatamente como está, com
+     comentários e formatação;
+   * seções novas são acrescentadas.
+3. Leia o console. Ele lista as seções atualizadas e as que foram mantidas:
 
-   ranking:
-     position-refresh-seconds: 60
+   ```
+   [GearScore] config.yml updated for this version; previous file saved as config.yml.bak-...
+   [GearScore] config.yml: customised sections kept as they were, please review them: server, tiers
    ```
 
-   `ranking.position-cache-seconds` deixou de existir; se estiver no arquivo,
-   é ignorada.
-4. **`database.yml`:** a opção `driver` foi removida. O valor `mysql` dependia
-   de um driver que não fazia parte do JAR. Se a linha `driver:` estiver no
-   arquivo, ela é ignorada; o driver MariaDB embutido é sempre usado.
-5. Troque o JAR e reinicie.
+4. Revise as seções mantidas, comparando com o padrão novo (dentro do JAR ou
+   no repositório):
+   * **`tiers`** — a pontuação agora soma o inventário inteiro e a escala
+     subiu. Faixas antigas (Mítico em 1400) ficam baixas demais. Padrão novo:
+     0 / 300 / 700 / 1200 / 1800 / 2400 / 3000.
+   * **`enchantments`** — os encantamentos passaram para o grupo da peça que
+     os recebe (`helmet`, `leggings`, `boots`). Em uma seção antiga mantida,
+     Peso-Pena e Respiração continuam no grupo `armor` e ainda pontuariam em
+     qualquer peça de armadura.
+   * **`evaluation`** — `weapon-slots` deixou de existir e é ignorado.
+   * **`summary`** (em `messages.yml`) — o `/gs` usa a chave nova
+     `summary.line`. As linhas antigas (`header`, `armor`, `weapon`, `updated`,
+     `note`) não são mais exibidas; se estavam personalizadas, permanecem no
+     arquivo e no backup, mas sem efeito.
+5. `rules-version` passa para 2 (ou é incrementado em 1, se você gerencia esse
+   número). Nenhuma alteração no banco é necessária.
+6. **Pontuações:** os jogadores online no New Era são reavaliados ao entrar.
+   Os demais mantêm a pontuação antiga, calculada pela regra anterior, até
+   entrarem de novo no New Era — o plugin não tem acesso ao inventário de quem
+   está offline e não estima valores. A coluna `rules_version` do banco
+   distingue os dois casos:
+
+   ```sql
+   SELECT rules_version, COUNT(*) FROM gearscore_players GROUP BY rules_version;
+   ```
+
+   Enquanto houver linhas com a versão antiga, o ranking mistura as duas
+   escalas. Para começar o ranking do zero, apague-as com o servidor parado:
+
+   ```sql
+   DELETE FROM gearscore_players WHERE rules_version < 2;
+   ```
+
+7. Para a sidebar do TAB, siga [TAB.md](TAB.md).
+
+Para desfazer: pare o servidor, restaure os arquivos `.bak-...` e volte o JAR
+anterior.
 
 ## Problemas comuns
 

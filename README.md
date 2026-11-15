@@ -15,19 +15,25 @@ potions or positioning and is not a prediction of who wins a fight.
 ## How the score is built
 
 ```
-GearScore = armor base + armor enchantments + best weapon base + best weapon enchantments
+GearScore = sum of every valid piece of gear the player carries
+piece     = base (material and type) + enchantments
 ```
 
-* Armor: the four equipped pieces.
-* Weapon: the single best one found in the hotbar or off hand. Carrying several
-  copies of the same sword or mace never raises the score, and the weapon that
-  was counted is shown to the player.
+* Read: the 36 inventory slots (hotbar included), the 4 armor slots and the off
+  hand, each slot exactly once. Equal items in different slots each count, and
+  armor kept in the inventory scores too.
+* Not read: ender chest, open containers, the cursor, the crafting grid and the
+  contents of shulker boxes or other containers.
+* Only configured materials (and custom items recognised by PDC) are gear.
+  Blocks, food, resources and enchanted books never score, whatever
+  enchantments or glint they carry.
+* Where an item sits does not matter: moving or equipping gear changes nothing.
 * Every enchantment has its own points per level and per equipment type, as a
   table or a linear value. Enchantments are grouped by relevance (combat,
   conditional, mob-only, mobility, utility, curses), each with a global
   multiplier.
-* Enchantments are matched by namespaced key. Unknown ones are worth zero until
-  configured.
+* Enchantments are matched by namespaced key and only score on gear that can
+  actually hold them. Unknown ones are worth zero until configured.
 * Levels above the vanilla limit, incompatible combinations and curses each
   have a configurable policy.
 * Custom items are recognised only through configured PersistentDataContainer
@@ -36,8 +42,8 @@ GearScore = armor base + armor enchantments + best weapon base + best weapon enc
 The plugin only reads items. It never changes attributes, enchantments or game
 mechanics.
 
-With the default configuration a full netherite set goes from 265 points
-unenchanted to 973 with Protection IV, Unbreaking III and Mending.
+With the default configuration a netherite chestplate is worth 90 points
+plain, 240 with Protection IV and 117 with only Unbreaking III and Mending.
 
 ## Network behaviour
 
@@ -71,17 +77,30 @@ player's individual position always agree.
 | Command | Description | Permission |
 |---|---|---|
 | `/gearscore`, `/gs` | Your score | `gearscore.use` |
-| `/gs ver <player>` | Another player's score | `gearscore.view.others` |
+| `/gs <player>` | Another player's score | `gearscore.view.others` |
 | `/gs detalhes [player]` | Per-item and per-enchantment breakdown | `gearscore.details`, `gearscore.details.others` |
 | `/gs top [page]` | Paginated ranking | `gearscore.top` |
 | `/gs reload` | Reload configuration | `gearscore.admin.reload` |
 | `/gs diag` | Performance counters | `gearscore.admin.diag` |
 
-## Placeholders
+`/gs` and `/gs <player>` answer with one line — player, score and tier:
 
-`%gearscore_total%`, `%gearscore_armor%`, `%gearscore_weapon%`,
-`%gearscore_tier%`, `%gearscore_tier_colored%`, `%gearscore_tier_id%`,
+```
+GearScore » zWorstOne • 1125 GS • Elite
+```
+
+Breakdowns live in `/gs detalhes`, technical data in `/gs diag`. The plugin
+never sends a message when a score changes. All texts are configurable.
+
+## Placeholders and the TAB sidebar
+
+`%gearscore_score%`, `%gearscore_tier%`, `%gearscore_tier_colored%`,
+`%gearscore_tier_id%`, `%gearscore_armor%`, `%gearscore_weapon%`,
 `%gearscore_position%`
+
+With TAB on the proxy, TAB-Bridge on each backend resolves them through
+PlaceholderAPI, so a sidebar line such as `⚔ GearScore: %gearscore_score%`
+needs no extra code. See [docs/TAB.md](docs/TAB.md).
 
 Every placeholder, the ranking position included, only reads memory: no SQL, no
 task, no inventory access, no waiting. Positions are refreshed by a separate
@@ -93,8 +112,8 @@ clocked step, so a faster TAB or hologram refresh never means more queries.
 * Change events are filtered in constant time (amount and durability changes
   are dropped), debounced per player and processed in due order under a
   per-tick limit by a task that only exists while work is queued.
-* Only 4 armor slots, the hotbar and the off hand are read, on the server
-  thread, into a minimal snapshot that doubles as a change signature.
+* The player's 41 slots are read on the server thread into a minimal,
+  position-independent snapshot that doubles as a change signature.
 * Rules are pre-processed at load time.
 * Writes are consolidated per player and batched on one dedicated thread, with
   a hard memory bound, exponential backoff and rate-limited logging.
@@ -106,7 +125,7 @@ clocked step, so a faster TAB or hologram refresh never means more queries.
 ./mvnw clean package
 ```
 
-The plugin JAR is written to `target/GearScore-1.1.0.jar`. MariaDB Connector/J
+The plugin JAR is written to `target/GearScore-2.0.0.jar`. MariaDB Connector/J
 and the connection pool are shaded into it.
 
 ```bash
@@ -126,19 +145,22 @@ plus query-plan and timing checks against a real MariaDB test database.
 
 ## Testing status
 
-* Automated tests cover the scoring rules, the evaluation queue and pipeline,
-  the query-server refresh and the persistence layer.
-* The persistence tests pass on H2 (MySQL mode) and on a real MariaDB 10.4.32,
-  where the schema upgrade, query plans and query times were also checked.
+* Automated tests cover the scoring rules, enchantment applicability, the
+  evaluation queue and pipeline, the query-server refresh, placeholders, the
+  configuration updater and the persistence layer (on H2 in MySQL mode).
+* Version 1.1.0's persistence layer, unchanged since, also passed on a real
+  MariaDB 10.4.32, including the schema upgrade and query plans.
 * A simulated load test covers 50, 100 and 200 players.
-* The plugin has **not** been measured on a live Paper server. See the
-  performance document for what each number does and does not show.
+* The plugin has **not** been run on a live Paper server, and the TAB sidebar
+  has **not** been verified on a real proxy. See the performance and TAB
+  documents for what was and was not checked.
 
 ## Documentation
 
 The server documentation is written in Portuguese.
 
 * [Instalação](docs/INSTALACAO.md) — setup, commands, permissions, placeholders, upgrading
+* [Sidebar do TAB](docs/TAB.md) — exact TAB configuration for the proxy sidebar
 * [Fórmula e balanceamento](docs/FORMULA.md) — formula, default tables, worked examples
 * [Banco de dados](docs/BANCO.md) — schema, migrations, ranking order, query plans
 * [Desempenho](docs/DESEMPENHO.md) — design, measurements, how to measure on a server

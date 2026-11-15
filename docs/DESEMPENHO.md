@@ -8,7 +8,8 @@ foi efetivamente medido.
 > | Ambiente | Situação |
 > |---|---|
 > | Servidor Paper real, com jogadores reais ou bots | **não executado** |
-> | MariaDB real | **executado**: MariaDB 10.4.32 local, toda a suíte de persistência, planos e tempos das consultas, e o driver embutido no JAR |
+> | MariaDB real | **executado na versão 1.1.0**: MariaDB 10.4.32 local, toda a suíte de persistência, planos e tempos das consultas, e o driver embutido no JAR. A camada de banco não mudou na 2.0.0 e esses testes **não foram repetidos** nela; a suíte de persistência da 2.0.0 rodou em H2 |
+> | TAB do proxy via TAB-Bridge | **não executado** (sem acesso à rede) |
 > | Simulação em JVM, sem Paper | **executado**: fila de avaliações, cálculo, cache, atualização dos servidores de consulta |
 >
 > Os números de simulação medem o código do plugin isoladamente. Eles **não**
@@ -33,14 +34,15 @@ foi efetivamente medido.
 
 ### Detecção de mudança (servidores oficiais)
 
-1. **Eventos.** `PlayerInventorySlotChangeEvent` (hotbar, armadura e mão
-   secundária), `PlayerArmorChangeEvent`, a tecla de troca da mão secundária em
-   contêineres, renascimento e troca de mundo.
-2. **Filtro no listener (custo constante).** O evento é descartado se o slot
-   não participa da fórmula, se nenhum dos dois itens é um equipamento
-   configurado, ou se material e encantamentos são iguais — ou seja, mudou só a
-   quantidade ou a durabilidade. Golpes em combate e blocos colocados param
-   aqui.
+1. **Eventos.** `PlayerInventorySlotChangeEvent` (qualquer slot do inventário
+   do jogador: cobre cliques, shift-click, arrastes, coleta, descarte, quebra,
+   troca de mãos, morte e alterações feitas por outros plugins),
+   `PlayerArmorChangeEvent`, a tecla de troca da mão secundária em contêineres,
+   morte, renascimento e troca de mundo.
+2. **Filtro no listener (custo constante).** O evento é descartado se nenhum
+   dos dois itens é um equipamento configurado, ou se material e encantamentos
+   são iguais — ou seja, mudou só a quantidade ou a durabilidade. Golpes em
+   combate, blocos colocados, comida e recursos coletados param aqui.
 3. **Agrupamento.** O jogador é marcado para avaliação daqui a
    `evaluation.debounce-ticks`. Novos eventos nesse intervalo não criam outra
    avaliação. Cada agendamento tem uma identificação própria: uma entrada
@@ -49,12 +51,16 @@ foi efetivamente medido.
 4. **Limite por tick.** Uma única tarefa processa a fila em ordem de
    vencimento, no máximo `evaluation.max-per-tick` jogadores por tick. Ela é
    cancelada quando a fila esvazia.
-5. **Snapshot mínimo.** Na thread principal são lidos 4 slots de armadura, 9
-   da hotbar e a mão secundária: material, encantamentos reais e, se houver
-   regras de itens personalizados, apenas as chaves PDC configuradas. Nome,
+5. **Snapshot mínimo.** Na thread principal são lidos os 41 slots do jogador
+   (36 do inventário, 4 de armadura e a mão secundária), cada um uma vez. Para
+   a maioria dos slots o custo é ler o material e consultar uma tabela; só os
+   itens que são equipamentos configurados têm os encantamentos reais lidos e,
+   se houver regras de itens personalizados, as chaves PDC configuradas. Nome,
    lore, NBT completo, durabilidade e quantidade não são lidos.
-6. **Assinatura.** O snapshot é comparado com o último avaliado. Igual: nada é
-   recalculado.
+6. **Assinatura.** O snapshot guarda os equipamentos em ordem canônica, sem o
+   slot. Ele é comparado com o último avaliado: se a composição é a mesma —
+   inclusive quando itens só mudaram de lugar, foram equipados ou desequipados
+   — nada é recalculado nem gravado.
 7. **Cálculo.** Feito na hora, sobre o snapshot, com regras pré-processadas no
    carregamento da configuração.
 8. **Gravação.** Só quando o resultado difere do que já está persistido.
@@ -85,6 +91,18 @@ a frequência das consultas.
 * Consultas de offline com cache temporário, inclusive de "não encontrado".
 * Recarregar as regras reavalia só os jogadores online, respeitando o limite
   por tick. Jogadores offline não são varridos.
+
+## Custos acrescentados na versão 2.0.0
+
+| Mudança | Custo |
+|---|---|
+| Inventário completo | a leitura passa de 14 para 41 slots por avaliação; o listener passa a considerar mudanças em qualquer slot, mas só as que trocam um equipamento configurado chegam à fila |
+| Ordem canônica do snapshot | uma ordenação de, no máximo, 41 itens por leitura |
+| Atualização automática dos arquivos | uma vez, na primeira inicialização após a troca do JAR |
+| Mensagens e sidebar | nenhum: o plugin continua sem enviar nada quando a pontuação muda, e os placeholders só leem memória |
+
+O tempo real da leitura de 41 slots pela API do Paper **não foi medido**; o
+`/gs diag` mostra a média e o máximo no servidor.
 
 ## Custos acrescentados na versão 1.1.0
 
@@ -139,8 +157,9 @@ SQL.
 
 **Ambiente:** JDK 21.0.12, Windows 11, 16 threads lógicas. 1200 ticks medidos
 (60 s de jogo) após aquecimento, `debounce-ticks: 10`, `max-per-tick: 20`.
-Cada jogador usa armadura de netherita totalmente encantada e 4 armas na
-hotbar/mão secundária.
+O inventário principal de cada jogador tem 14 equipamentos válidos (armadura de
+netherita encantada, seis armas e uma armadura reserva); os outros dois
+conjuntos têm 7 e 5.
 
 Cenários:
 
@@ -150,35 +169,35 @@ Cenários:
 * **Troca rápida:** todo jogador troca o conjunto inteiro a cada 2 ticks,
   escolhendo ao acaso entre três conjuntos.
 * **Movimentação de itens:** 10 eventos por segundo por jogador; em 20% deles
-  a arma muda de slot na hotbar (o equipamento muda de posição, a pontuação
-  não).
+  os equipamentos mudam de slot (a composição não muda).
 
 | Cenário | Jogadores | Eventos | Agrupados | Leituras | Sem mudança | Recalculados | Média µs/tick | p99 µs/tick | Máx. µs/tick | Mudanças de pontuação | Lotes SQL | Linhas gravadas |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Combate | 50 | 12 149 | 8 149 | 3 970 | 3 843 | 127 | 9,3 | 83,1 | 1 833,8 | 127 | 20 | 123 |
-| Combate | 100 | 24 298 | 16 298 | 7 920 | 7 664 | 256 | 14,7 | 88,8 | 2 600,9 | 256 | 20 | 249 |
-| Combate | 200 | 48 582 | 32 582 | 15 820 | 15 320 | 500 | 27,7 | 390,6 | 1 249,6 | 500 | 21 | 483 |
-| Troca rápida | 50 | 30 000 | 25 000 | 4 970 | 1 653 | 3 317 | 17,2 | 146,8 | 582,1 | 3 317 | 20 | 995 |
-| Troca rápida | 100 | 60 000 | 50 000 | 9 920 | 3 272 | 6 648 | 29,5 | 162,9 | 1 408,9 | 6 648 | 20 | 1 991 |
-| Troca rápida | 200 | 120 000 | 100 000 | 19 820 | 6 431 | 13 389 | 41,1 | 103,2 | 1 297,7 | 13 389 | 40 | 3 985 |
-| Movimentação | 50 | 30 000 | 25 000 | 4 970 | 1 732 | 3 238 | 10,2 | 70,5 | 211,5 | 50 | 1 | 50 |
-| Movimentação | 100 | 60 000 | 50 000 | 9 920 | 3 415 | 6 505 | 21,7 | 107,7 | 218,2 | 100 | 1 | 100 |
-| Movimentação | 200 | 120 000 | 100 000 | 19 820 | 6 824 | 12 996 | 60,6 | 178,8 | 783,5 | 200 | 2 | 200 |
+| Combate | 50 | 12 149 | 8 149 | 3 970 | 3 843 | 127 | 14,6 | 151,7 | 1 905,4 | 127 | 20 | 123 |
+| Combate | 100 | 24 298 | 16 298 | 7 920 | 7 664 | 256 | 11,8 | 67,6 | 1 689,1 | 256 | 20 | 249 |
+| Combate | 200 | 48 582 | 32 582 | 15 820 | 15 320 | 500 | 13,6 | 65,2 | 155,4 | 500 | 21 | 483 |
+| Troca rápida | 50 | 30 000 | 25 000 | 4 970 | 1 653 | 3 317 | 22,4 | 164,9 | 312,0 | 3 317 | 20 | 995 |
+| Troca rápida | 100 | 60 000 | 50 000 | 9 920 | 3 272 | 6 648 | 24,5 | 111,8 | 336,7 | 6 648 | 20 | 1 991 |
+| Troca rápida | 200 | 120 000 | 100 000 | 19 820 | 6 431 | 13 389 | 31,0 | 77,0 | 101,7 | 13 389 | 40 | 3 985 |
+| Movimentação | 50 | 30 000 | 25 000 | 4 970 | 4 920 | 50 | 6,4 | 41,4 | 159,2 | 50 | 1 | 50 |
+| Movimentação | 100 | 60 000 | 50 000 | 9 920 | 9 820 | 100 | 25,0 | 147,2 | 314,4 | 100 | 1 | 100 |
+| Movimentação | 200 | 120 000 | 100 000 | 19 820 | 19 620 | 200 | 25,7 | 126,5 | 835,9 | 200 | 2 | 200 |
 
 Leitura dos resultados, dentro dos limites da simulação:
 
-* Um tick tem 50 000 µs. Nos cenários medidos, a média ficou entre 9 e 61 µs
-  por tick e o p99 abaixo de 400 µs.
-* Os valores máximos isolados (até 2,6 ms) apareceram também em cenários leves
+* Um tick tem 50 000 µs. Nos cenários medidos, a média ficou entre 6 e 31 µs
+  por tick e o p99 abaixo de 170 µs.
+* Os valores máximos isolados (até 1,9 ms) apareceram também em cenários leves
   e são compatíveis com pausas da própria JVM (GC/JIT) durante a medição; a
   simulação não os separa do código do plugin.
 * O agrupamento absorveu de 67% a 83% dos eventos antes de qualquer leitura.
-* Em "Movimentação", 120 000 eventos de 200 jogadores resultaram em 200 linhas
-  gravadas em 2 lotes: mudar o item de lugar não gera gravação.
+* Em "Movimentação", 120 000 eventos de 200 jogadores resultaram em 200
+  recálculos (o inicial de cada jogador) e 200 linhas gravadas em 2 lotes:
+  mudar equipamentos de lugar não gera recálculo nem gravação.
 * Em "Troca rápida", 13 389 mudanças de pontuação viraram 3 985 linhas em 40
   lotes ao longo de 60 s, por causa da consolidação por jogador.
-* As medições variam entre execuções (a mesma simulação, na versão 1.0.0,
-  ficou entre 7 e 32 µs de média); trate-as como ordem de grandeza.
+* As medições variam entre execuções (na versão 1.1.0, com 8 a 9 itens por
+  jogador, a média ficou entre 9 e 61 µs); trate-as como ordem de grandeza.
 
 ### Servidor de consulta simulado
 
@@ -189,13 +208,13 @@ quantas leituras agrupadas são pedidas.
 
 | Jogadores | Leituras agrupadas em 10 min | Jogadores por leitura | Média µs por execução | Máx. µs |
 |---:|---:|---:|---:|---:|
-| 50 | 81 | 12,6 | 13,8 | 4 348,1 |
-| 100 | 82 | 24,8 | 5,2 | 183,6 |
-| 200 | 100 | 40,7 | 9,3 | 355,3 |
+| 50 | 81 | 12,6 | 11,4 | 3 006,7 |
+| 100 | 82 | 24,8 | 5,1 | 193,1 |
+| 200 | 100 | 40,7 | 8,0 | 248,9 |
 
 A maior parte das leituras acontece durante o minuto de entradas (leitura de
 entrada e reverificação de cada jogador). Depois disso, 200 jogadores custam 2
-leituras a cada 30 s. O máximo de 4,3 ms ocorreu na primeira execução da
+leituras a cada 30 s. O máximo de 3,0 ms ocorreu na primeira execução da
 primeira rodada, antes do aquecimento da JVM.
 
 Combinando com a medição em MariaDB real (0,80 ms para 100 jogadores por
@@ -224,7 +243,7 @@ ordem de 2 ms de banco a cada 30 s.
 | `/gs ver` de offline | 1 `SELECT` por nome a cada `offline-cache-seconds` |
 | Posições | no máximo 1 leitura agrupada por servidor a cada `position-refresh-seconds`, só com o placeholder em uso |
 
-Verificado nos testes automatizados (H2 e MariaDB 10.4.32):
+Verificado nos testes automatizados (H2; na 1.1.0, também MariaDB 10.4.32):
 
 * 50 alterações do mesmo jogador resultaram em 1 linha e 1 lote; 250 jogadores,
   em 3 lotes; 20 aberturas seguidas do ranking executaram 1 consulta;
@@ -240,10 +259,10 @@ Verificado nos testes automatizados (H2 e MariaDB 10.4.32):
 ### Memória
 
 Medição aproximada por diferença de heap após GC, com 2000 jogadores
-simulados: **cerca de 2,3 KB por jogador acompanhado** (estado, último snapshot
-e resultado com detalhamento). Em outra execução, com os inventários de cada
-jogador em objetos separados, a mesma medição ficou em cerca de 4,9 KB. Para
-200 jogadores isso representa algo entre 0,5 MB e 1 MB. Os dados são removidos
+simulados com 14 equipamentos cada: **cerca de 4 KB por jogador acompanhado**
+(estado, último snapshot e resultado com detalhamento). O valor cresce com a
+quantidade de equipamentos válidos no inventário, até o limite de 41. Para 200
+jogadores isso representa cerca de 1 MB. Os dados são removidos
 quando o jogador sai.
 
 Em servidores de consulta o custo por jogador é menor: um registro com a
@@ -261,18 +280,18 @@ conexões:
 
 | Medida | Resultado |
 |---|---|
-| Tempo na thread principal | média 39,8 µs/tick, máximo 1 574,3 µs |
+| Tempo na thread principal | média 53,1 µs/tick, máximo 4 017,3 µs |
 | Mudanças de pontuação enviadas à fila | 13 389 |
 | Pendentes na memória ao final | 200 (uma por jogador) |
-| Consolidadas | 13 089 |
+| Consolidadas | 13 189 |
 | Descartadas | 0 |
-| Tentativas de conexão que falharam | 1 em 359 ms de execução |
+| Tentativas de conexão que falharam | 1 em 407 ms de execução |
 | Desligamento com o banco ainda fora | retornou em 2 ms, 200 atualizações não gravadas |
 
 A thread principal nunca espera o banco: ela apenas coloca o registro na fila.
 
-Verificado nos testes automatizados (H2 e MariaDB 10.4.32, com a queda
-simulada na obtenção da conexão):
+Verificado nos testes automatizados (H2; na 1.1.0, também MariaDB 10.4.32;
+a queda é simulada na obtenção da conexão):
 
 * durante a queda, as atualizações ficam pendentes e uma mais nova substitui a
   anterior do mesmo jogador;
