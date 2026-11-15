@@ -1,0 +1,344 @@
+# ============================================================================
+#  GearScore - por Zwo - Rede Serpens
+#
+#  O GearScore é uma ESTIMATIVA da força do equipamento. Ele não garante
+#  vitória em PvP: habilidade, poções, comida e posicionamento não entram
+#  na conta.
+#
+#  Fórmula:
+#    GearScore = base das armaduras
+#              + encantamentos das armaduras
+#              + base da melhor arma
+#              + encantamentos dessa arma
+#
+#  Somente os 4 slots de armadura, a hotbar e a mão secundária são lidos.
+#  Apenas UMA arma conta (a de maior pontuação), então carregar várias
+#  espadas iguais não aumenta o resultado.
+#
+#  Depois de editar, use /gearscore reload.
+#  A conexão com o banco fica em database.yml.
+# ============================================================================
+
+# Versão das regras de cálculo. Aumente este número sempre que mudar pesos de
+# forma relevante: ele é gravado junto com cada pontuação, permitindo saber
+# com qual tabela um resultado foi calculado.
+rules-version: 1
+
+# ----------------------------------------------------------------------------
+#  Servidor
+# ----------------------------------------------------------------------------
+server:
+  # Nome desta instância (igual ao nome usado no Velocity é o mais prático).
+  name: "newera"
+
+  # Instâncias autorizadas a calcular e gravar a pontuação OFICIAL.
+  # Se o nome acima estiver nesta lista, o servidor calcula e grava.
+  # Caso contrário (hub, eventos...), ele NÃO lê inventários e NÃO grava:
+  # apenas consulta o resultado oficial no banco quando necessário.
+  official-sources:
+    - "newera"
+
+# ----------------------------------------------------------------------------
+#  Atualização nos servidores de consulta (hub, eventos...)
+# ----------------------------------------------------------------------------
+# Só vale para instâncias que NÃO são origem oficial. Elas nunca leem
+# inventários: apenas buscam no banco a pontuação oficial dos jogadores que
+# estão online nelas, em consultas agrupadas por chave primária.
+#
+# Quando o jogador troca de servidor, o destino costuma consultar o banco
+# ANTES de a origem gravar o último resultado. Por isso a leitura é repetida:
+#   1. ao entrar;
+#   2. "join-recheck-seconds" depois (deve ser maior que o
+#      writes.flush-interval-ms da origem, definido em database.yml);
+#   3. a cada "interval-seconds" enquanto o jogador estiver online, o que
+#      também corrige leituras que falharam ou jogadores ainda sem registro.
+query-refresh:
+  interval-seconds: 30
+  join-recheck-seconds: 5
+  # Jogadores por consulta e consultas por ciclo (1 ciclo por segundo).
+  # O excedente fica para os ciclos seguintes.
+  batch-size: 100
+  max-batches-per-cycle: 3
+
+# ----------------------------------------------------------------------------
+#  Avaliação e desempenho
+# ----------------------------------------------------------------------------
+evaluation:
+  # Ticks de espera entre a primeira alteração de equipamento e a avaliação.
+  # Todas as alterações do mesmo jogador nesse intervalo viram UMA avaliação.
+  # 20 ticks = 1 segundo.
+  debounce-ticks: 10
+
+  # Máximo de jogadores avaliados por tick. O excedente fica para os ticks
+  # seguintes, espalhando picos (ex.: muitos jogadores trocando de kit).
+  max-per-tick: 20
+
+  # Onde procurar a arma.
+  weapon-slots:
+    hotbar: true
+    offhand: true
+
+  # Mundos onde o equipamento não é avaliado (a última pontuação é mantida).
+  ignored-worlds: []
+  #  - "world_eventos"
+
+  # Itens que nunca pontuam, pelo nome do material em minúsculas.
+  ignored-items: []
+  #  - "wooden_sword"
+  #  - "elytra"
+
+# ----------------------------------------------------------------------------
+#  Pontuação base das armaduras (material x slot)
+# ----------------------------------------------------------------------------
+armor:
+  # Multiplicador aplicado à base de cada slot.
+  slot-multipliers:
+    helmet: 1.0
+    chestplate: 1.0
+    leggings: 1.0
+    boots: 1.0
+
+  # O item avaliado é "<material>_<slot>", por exemplo netherite_chestplate.
+  # Materiais que não existirem na versão do servidor são ignorados.
+  materials:
+    leather:   { helmet: 12, chestplate: 21, leggings: 17, boots: 10 }
+    golden:    { helmet: 18, chestplate: 32, leggings: 26, boots: 14 }
+    copper:    { helmet: 19, chestplate: 33, leggings: 28, boots: 15 }
+    chainmail: { helmet: 22, chestplate: 38, leggings: 32, boots: 18 }
+    iron:      { helmet: 28, chestplate: 48, leggings: 42, boots: 22 }
+    diamond:   { helmet: 45, chestplate: 75, leggings: 65, boots: 35 }
+    netherite: { helmet: 55, chestplate: 90, leggings: 75, boots: 45 }
+
+  # Peças que não seguem o padrão "<material>_<slot>".
+  special-items:
+    turtle_helmet: { slot: helmet, base: 25 }
+    elytra:        { slot: chestplate, base: 0 }
+
+# ----------------------------------------------------------------------------
+#  Pontuação base das armas (tipo x material)
+# ----------------------------------------------------------------------------
+weapons:
+  # Multiplicador aplicado à base de cada tipo de arma.
+  type-multipliers:
+    sword: 1.0
+    axe: 1.0
+    mace: 1.0
+    trident: 1.0
+    bow: 1.0
+    crossbow: 1.0
+    spear: 1.0
+
+  sword: { wooden: 20, golden: 22, stone: 30, copper: 35, iron: 45, diamond: 65, netherite: 80 }
+  axe:   { wooden: 22, golden: 22, stone: 32, copper: 36, iron: 46, diamond: 62, netherite: 76 }
+  spear: { wooden: 15, golden: 18, stone: 22, copper: 26, iron: 34, diamond: 48, netherite: 60 }
+  mace: 110
+  trident: 90
+  bow: 50
+  crossbow: 55
+
+# ----------------------------------------------------------------------------
+#  Encantamentos
+# ----------------------------------------------------------------------------
+enchantments:
+  # Multiplicador global por categoria. Permite subir ou descer uma classe
+  # inteira de encantamentos sem editar um por um.
+  #   combat      - sempre útil contra jogadores (Proteção, Afiação, Força...)
+  #   conditional - útil só em certas situações (proteções especializadas,
+  #                 Espinhos, Repulsão, Canalização...)
+  #   mob         - especializado em mobs (Julgamento, Ruína dos Artrópodes,
+  #                 Empalamento)
+  #   mobility    - mobilidade (Peso-Pena, Passos Profundos, Correnteza...)
+  #   utility     - durabilidade e utilidade (Inquebrável, Remendo, Saque...)
+  #   curse       - maldições
+  category-multipliers:
+    combat: 1.0
+    conditional: 1.0
+    mob: 1.0
+    mobility: 1.0
+    utility: 1.0
+    curse: 1.0
+
+  # Níveis acima do limite ("max-level" de cada encantamento):
+  #   cap   - pontua como se fosse o nível máximo (padrão)
+  #   zero  - o encantamento não pontua
+  #   allow - continua escalando (tabela + per-level por nível extra)
+  above-max-level: cap
+
+  # Combinações que o vanilla não permite na mesma peça.
+  incompatible:
+    #   highest - só o encantamento de maior pontuação do grupo conta (padrão)
+    #   sum     - todos contam
+    #   zero    - nenhum do grupo conta
+    mode: highest
+    groups:
+      - ["minecraft:protection", "minecraft:blast_protection", "minecraft:fire_protection", "minecraft:projectile_protection"]
+      - ["minecraft:sharpness", "minecraft:smite", "minecraft:bane_of_arthropods", "minecraft:density", "minecraft:breach"]
+      - ["minecraft:depth_strider", "minecraft:frost_walker"]
+      - ["minecraft:infinity", "minecraft:mending"]
+      - ["minecraft:multishot", "minecraft:piercing"]
+      - ["minecraft:riptide", "minecraft:loyalty"]
+      - ["minecraft:riptide", "minecraft:channeling"]
+      - ["minecraft:silk_touch", "minecraft:fortune"]
+
+  # Regras por equipamento. A busca é feita nesta ordem, e a mais específica
+  # vence:
+  #   1. o tipo da peça: helmet, chestplate, leggings, boots, sword, axe,
+  #      mace, trident, bow, crossbow, spear
+  #   2. a família: armor (armaduras) ou weapon (armas)
+  #   3. any (qualquer equipamento)
+  #
+  # Cada encantamento é identificado pela chave com namespace e aceita:
+  #   category:  uma das categorias acima (padrão: combat)
+  #   levels:    tabela de pontos por nível -> [nível 1, nível 2, ...]
+  #   per-level: pontos por nível (progressão linear). Com "levels", vale
+  #              para cada nível além do fim da tabela.
+  #   max-level: limite de nível. Se omitido, usa o tamanho da tabela ou o
+  #              máximo vanilla do encantamento.
+  # Forma curta:  "minecraft:exemplo": 10   (10 pontos por nível, combat)
+  #
+  # Encantamentos que não aparecem aqui valem ZERO (inclusive os de
+  # datapacks e plugins) até serem configurados. O /gearscore diag lista as
+  # chaves desconhecidas que foram encontradas.
+  rules:
+    any:
+      "minecraft:unbreaking":      { category: utility, levels: [5, 10, 15] }
+      "minecraft:mending":         { category: utility, levels: [12] }
+      # Maldições: use valor negativo (penaliza), 0 (neutro) ou positivo.
+      "minecraft:vanishing_curse": { category: curse, levels: [-10] }
+      "minecraft:binding_curse":   { category: curse, levels: [-10] }
+
+    armor:
+      # Defesa geral: vale em qualquer luta.
+      "minecraft:protection":            { category: combat, levels: [30, 65, 105, 150] }
+      # Proteções especializadas: valem menos que a geral porque só ajudam
+      # contra um tipo de dano. Ajuste para o perfil de PvP do servidor
+      # (ex.: suba blast_protection se cristais/âncoras forem comuns).
+      "minecraft:blast_protection":      { category: conditional, levels: [15, 32, 52, 75] }
+      "minecraft:projectile_protection": { category: conditional, levels: [15, 32, 52, 75] }
+      "minecraft:fire_protection":       { category: conditional, levels: [12, 26, 42, 60] }
+      "minecraft:thorns":                { category: conditional, levels: [15, 30, 45] }
+      # Mobilidade
+      "minecraft:feather_falling":       { category: mobility, levels: [10, 20, 30, 40] }
+      "minecraft:depth_strider":         { category: mobility, levels: [6, 12, 18] }
+      "minecraft:frost_walker":          { category: mobility, levels: [4, 8] }
+      "minecraft:soul_speed":            { category: mobility, levels: [5, 10, 15] }
+      "minecraft:swift_sneak":           { category: mobility, levels: [6, 12, 18] }
+      # Utilidade
+      "minecraft:respiration":           { category: utility, levels: [4, 8, 12] }
+      "minecraft:aqua_affinity":         { category: utility, levels: [5] }
+
+    sword:
+      "minecraft:sharpness":          { category: combat, levels: [25, 50, 80, 115, 155] }
+      "minecraft:fire_aspect":        { category: combat, levels: [25, 45] }
+      "minecraft:knockback":          { category: conditional, levels: [12, 22] }
+      "minecraft:sweeping_edge":      { category: conditional, levels: [8, 16, 24] }
+      # Especializados em mobs: quase não ajudam contra jogadores.
+      "minecraft:smite":              { category: mob, per-level: 6, max-level: 5 }
+      "minecraft:bane_of_arthropods": { category: mob, per-level: 4, max-level: 5 }
+      "minecraft:looting":            { category: utility, per-level: 3, max-level: 3 }
+
+    axe:
+      "minecraft:sharpness":          { category: combat, levels: [25, 50, 80, 115, 155] }
+      "minecraft:smite":              { category: mob, per-level: 6, max-level: 5 }
+      "minecraft:bane_of_arthropods": { category: mob, per-level: 4, max-level: 5 }
+      "minecraft:efficiency":         { category: utility, per-level: 2, max-level: 5 }
+      "minecraft:silk_touch":         { category: utility, levels: [0] }
+      "minecraft:fortune":            { category: utility, per-level: 0, max-level: 3 }
+
+    mace:
+      "minecraft:density":            { category: combat, levels: [30, 60, 95, 130, 170] }
+      "minecraft:breach":             { category: combat, levels: [30, 60, 90, 120] }
+      "minecraft:wind_burst":         { category: mobility, levels: [20, 40, 60] }
+      "minecraft:fire_aspect":        { category: combat, levels: [25, 45] }
+      "minecraft:smite":              { category: mob, per-level: 6, max-level: 5 }
+      "minecraft:bane_of_arthropods": { category: mob, per-level: 4, max-level: 5 }
+
+    trident:
+      "minecraft:loyalty":            { category: combat, levels: [15, 25, 35] }
+      "minecraft:riptide":            { category: mobility, levels: [20, 35, 50] }
+      "minecraft:channeling":         { category: conditional, levels: [10] }
+      # No Java, Empalamento só afeta mobs aquáticos.
+      "minecraft:impaling":           { category: mob, per-level: 5, max-level: 5 }
+
+    bow:
+      "minecraft:power":              { category: combat, levels: [20, 40, 65, 90, 120] }
+      "minecraft:flame":              { category: combat, levels: [25] }
+      "minecraft:punch":              { category: conditional, levels: [10, 20] }
+      "minecraft:infinity":           { category: utility, levels: [30] }
+
+    crossbow:
+      "minecraft:quick_charge":       { category: combat, levels: [20, 40, 60] }
+      "minecraft:piercing":           { category: conditional, levels: [8, 16, 24, 32] }
+      "minecraft:multishot":          { category: conditional, levels: [25] }
+
+    spear:
+      "minecraft:sharpness":          { category: combat, levels: [25, 50, 80, 115, 155] }
+      "minecraft:lunge":              { category: mobility, levels: [15, 30, 45] }
+      "minecraft:fire_aspect":        { category: combat, levels: [25, 45] }
+      "minecraft:knockback":          { category: conditional, levels: [12, 22] }
+      "minecraft:smite":              { category: mob, per-level: 6, max-level: 5 }
+      "minecraft:bane_of_arthropods": { category: mob, per-level: 4, max-level: 5 }
+      "minecraft:looting":            { category: utility, per-level: 3, max-level: 3 }
+
+# ----------------------------------------------------------------------------
+#  Itens personalizados (opcional)
+# ----------------------------------------------------------------------------
+# Um item só é considerado especial se tiver a chave configurada no
+# PersistentDataContainer. Nome, lore, CustomModelData e brilho visual NÃO
+# são lidos e nunca geram pontos.
+# Somente as chaves listadas aqui são consultadas.
+custom-items:
+  enabled: false
+  rules: {}
+  #  espada-do-rei:
+  #    key: "serpensitems:id"   # chave PDC com namespace
+  #    type: string             # string | integer | byte | any (só presença)
+  #    value: "espada_do_rei"   # valor esperado (ignorado com type: any)
+  #    gear-type: sword         # opcional: trata o item como este tipo,
+  #                             # mesmo que o material não seja uma arma
+  #    base: 120                # opcional: substitui a base do material
+  #    bonus: 80                # pontos somados à base
+  #    multiplier: 1.0          # multiplica a pontuação final do item
+
+# ----------------------------------------------------------------------------
+#  Faixas de classificação
+# ----------------------------------------------------------------------------
+# "min" é a pontuação mínima da faixa. "name" aceita MiniMessage.
+tiers:
+  - { id: iniciante, name: "<gray>Iniciante",          min: 0 }
+  - { id: aprendiz,  name: "<white>Aprendiz",          min: 150 }
+  - { id: guerreiro, name: "<green>Guerreiro",         min: 350 }
+  - { id: veterano,  name: "<aqua>Veterano",           min: 600 }
+  - { id: elite,     name: "<light_purple>Elite",      min: 900 }
+  - { id: lendario,  name: "<gold>Lendário",           min: 1200 }
+  - { id: mitico,    name: "<red><bold>Mítico",        min: 1400 }
+
+# ----------------------------------------------------------------------------
+#  Ranking
+# ----------------------------------------------------------------------------
+# O ranking mostra o ÚLTIMO equipamento avaliado de cada jogador (com a data
+# da atualização). Não é um recorde histórico: se o jogador trocar para um
+# equipamento pior, a pontuação dele cai.
+# Ordem (a mesma no /gs top e na posição individual): maior pontuação;
+# em caso de empate, quem atingiu a pontuação primeiro; por fim, o UUID.
+ranking:
+  page-size: 10
+  # Quantidade máxima de registros lidos do banco. A tabela inteira nunca é
+  # carregada na memória.
+  max-entries: 100
+  # O resultado é compartilhado entre todos que abrem o ranking durante
+  # este tempo (segundos).
+  cache-seconds: 30
+  # Intervalo (segundos) entre as atualizações das posições usadas por
+  # %gearscore_position%. O placeholder só lê a memória; quem consulta o
+  # banco é este ciclo: uma leitura agrupada para os jogadores online neste
+  # servidor, e somente enquanto o placeholder estiver em uso. A frequência
+  # com que o TAB ou os hologramas pedem o valor não muda este intervalo.
+  position-refresh-seconds: 60
+
+# ----------------------------------------------------------------------------
+#  PlaceholderAPI
+# ----------------------------------------------------------------------------
+placeholders:
+  # Texto retornado enquanto o dado ainda não está disponível.
+  fallback: "-"
