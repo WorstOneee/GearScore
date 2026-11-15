@@ -30,7 +30,7 @@ O driver MariaDB vem embutido no JAR; não há nada a instalar.
 
 ## 2. Instalar o JAR
 
-1. Copie `GearScore-2.0.0.jar` para a pasta `plugins/` de **cada** servidor
+1. Copie `GearScore-3.0.0.jar` para a pasta `plugins/` de **cada** servidor
    Paper que deve mostrar a pontuação (New Era, hub, eventos...).
 2. Inicie o servidor uma vez para gerar `plugins/GearScore/`.
 3. Edite `database.yml` (mesmos dados em todos os servidores) e `config.yml`.
@@ -97,7 +97,7 @@ Na inicialização o console confirma o modo:
 |---|---|---|---|
 | `/gearscore` ou `/gs` | sua pontuação | `gearscore.use` | todos |
 | `/gs <jogador>` | pontuação de outro jogador, online ou offline (`/gs ver <jogador>` também funciona) | `gearscore.view.others` | todos |
-| `/gs detalhes` | equipamentos e encantamentos que pontuam | `gearscore.details` | todos |
+| `/gs detalhes` | as cinco peças escolhidas e seus pontos | `gearscore.details` | todos |
 | `/gs detalhes <jogador>` | detalhamento de outro jogador online | `gearscore.details.others` | OP |
 | `/gs top [página]` | ranking paginado | `gearscore.top` | todos |
 | `/gs reload` | recarrega `config.yml` e `messages.yml` | `gearscore.admin.reload` | OP |
@@ -114,11 +114,11 @@ classificação.
 GearScore » zWorstOne • 1125 GS • Elite
 ```
 
-`/gs detalhes [jogador]` mostra os totais de armaduras e armas (base +
-encantamentos), os equipamentos de maior pontuação (`display.details-max-items`,
-padrão 12; passe o mouse sobre um item para ver cada encantamento) e quando a
-pontuação foi atualizada. O detalhamento existe apenas para jogadores online no
-servidor de origem oficial, que é onde os itens são lidos.
+`/gs detalhes [jogador]` mostra as cinco peças que formam a pontuação —
+capacete, peitoral, calça, bota e arma — cada uma com o total, a base e os
+encantamentos (passe o mouse sobre a linha para ver cada encantamento), e
+quando a pontuação foi atualizada. O detalhamento existe apenas para jogadores
+online no servidor de origem oficial, que é onde os itens são lidos.
 
 O nome do servidor de origem e a versão das regras **não** aparecem para os
 jogadores. Eles continuam gravados no banco, porque controlam a origem oficial,
@@ -130,8 +130,8 @@ quando o inventário ou a pontuação muda.
 
 Outras observações:
 
-* O ranking mostra o **último inventário avaliado** de cada jogador. Não é
-  recorde histórico: carregar menos equipamentos baixa a pontuação.
+* O ranking mostra o **último conjunto avaliado** de cada jogador. Não é
+  recorde histórico: perder a melhor peça baixa a pontuação.
 * No ranking, empates são decididos por quem atingiu a pontuação primeiro e,
   por fim, pelo UUID. A posição do placeholder segue exatamente essa ordem.
 * `/gs reload` não recria a conexão com o banco nem muda `server`,
@@ -173,16 +173,17 @@ de configuração, está em [TAB.md](TAB.md).
 
 ## 6. Verificar
 
-1. Entre no New Era com equipamentos no inventário e rode `/gs` e
-   `/gs detalhes`.
-2. Jogue uma arma no chão e rode `/gs`: a pontuação cai o valor daquela arma.
-   Pegue de volta: o valor retorna.
-3. Mova um equipamento de slot ou equipe uma armadura que estava guardada: a
-   pontuação não muda.
-4. Rode `/gs diag`: "Banco: disponível" e "linhas gravadas" maior que zero.
-5. Vá para a hub e rode `/gs`: a pontuação é a mesma. Se aparecer um valor
+1. Entre no New Era com equipamentos e rode `/gs` e `/gs detalhes`.
+2. Guarde no inventário uma peça melhor que a equipada: a pontuação sobe sem
+   precisar vesti-la, e o `/gs detalhes` passa a mostrá-la.
+3. Pegue uma segunda espada igual ou pior: a pontuação não muda.
+4. Jogue no chão a arma que aparece no `/gs detalhes`: a pontuação cai para a
+   da próxima melhor arma. Pegue de volta: o valor retorna.
+5. Mova equipamentos de slot: a pontuação não muda.
+6. Rode `/gs diag`: "Banco: disponível" e "linhas gravadas" maior que zero.
+7. Vá para a hub e rode `/gs`: a pontuação é a mesma. Se aparecer um valor
    anterior logo ao chegar, ele se corrige em até `join-recheck-seconds`.
-6. Na hub, pegue qualquer kit e volte ao New Era: nada foi sobrescrito.
+8. Na hub, pegue qualquer kit e volte ao New Era: nada foi sobrescrito.
 
 ## Compilar
 
@@ -190,7 +191,7 @@ de configuração, está em [TAB.md](TAB.md).
 ./mvnw clean package
 ```
 
-O JAR sai em `target/GearScore-2.0.0.jar`. Para rodar o teste de carga
+O JAR sai em `target/GearScore-3.0.0.jar`. Para rodar o teste de carga
 simulado:
 
 ```bash
@@ -204,63 +205,70 @@ teste cria e remove tabelas com prefixo próprio):
 ./mvnw test -Pmariadb "-Dgearscore.test.jdbc=jdbc:mariadb://127.0.0.1:3306/gstest?user=USUARIO&password=SENHA"
 ```
 
-## Atualizando para a 2.0.0
+## Atualizando para a 3.0.0
 
-Vale para quem está na 1.0.0 ou na 1.1.0.
+Vale para quem está em qualquer versão anterior.
 
-1. Pare o servidor, troque o JAR por `GearScore-2.0.0.jar` em **todos** os
+1. Pare o servidor, troque o JAR por `GearScore-3.0.0.jar` em **todos** os
    servidores (New Era, hub, eventos) e inicie.
 2. Na primeira inicialização o plugin atualiza `config.yml` e `messages.yml`
    sozinho:
    * antes de alterar, salva uma cópia ao lado:
      `config.yml.bak-AAAAMMDD-HHMMSS` e `messages.yml.bak-AAAAMMDD-HHMMSS`;
    * cada seção de primeiro nível (`server`, `evaluation`, `enchantments`,
-     `tiers`, `summary`, `prefix`...) que **não foi alterada** recebe o novo
+     `tiers`, `details`, `prefix`...) que **não foi alterada** recebe o novo
      padrão;
    * cada seção que **você alterou** é mantida exatamente como está, com
      comentários e formatação;
-   * seções novas são acrescentadas.
+   * seções novas são acrescentadas e seções obsoletas não alteradas são
+     removidas.
 3. Leia o console. Ele lista as seções atualizadas e as que foram mantidas:
 
    ```
    [GearScore] config.yml updated for this version; previous file saved as config.yml.bak-...
-   [GearScore] config.yml: customised sections kept as they were, please review them: server, tiers
+   [GearScore] config.yml: customised sections kept as they were, please review them: server
    ```
 
-4. Revise as seções mantidas, comparando com o padrão novo (dentro do JAR ou
-   no repositório):
-   * **`tiers`** — a pontuação agora soma o inventário inteiro e a escala
-     subiu. Faixas antigas (Mítico em 1400) ficam baixas demais. Padrão novo:
-     0 / 300 / 700 / 1200 / 1800 / 2400 / 3000.
-   * **`enchantments`** — os encantamentos passaram para o grupo da peça que
-     os recebe (`helmet`, `leggings`, `boots`). Em uma seção antiga mantida,
-     Peso-Pena e Respiração continuam no grupo `armor` e ainda pontuariam em
-     qualquer peça de armadura.
-   * **`evaluation`** — `weapon-slots` deixou de existir e é ignorado.
-   * **`summary`** (em `messages.yml`) — o `/gs` usa a chave nova
-     `summary.line`. As linhas antigas (`header`, `armor`, `weapon`, `updated`,
-     `note`) não são mais exibidas; se estavam personalizadas, permanecem no
-     arquivo e no backup, mas sem efeito.
-5. `rules-version` passa para 2 (ou é incrementado em 1, se você gerencia esse
-   número). Nenhuma alteração no banco é necessária.
-6. **Pontuações:** os jogadores online no New Era são reavaliados ao entrar.
-   Os demais mantêm a pontuação antiga, calculada pela regra anterior, até
-   entrarem de novo no New Era — o plugin não tem acesso ao inventário de quem
-   está offline e não estima valores. A coluna `rules_version` do banco
-   distingue os dois casos:
+4. O que muda nos arquivos, vindo da 2.0.0:
+
+   | Arquivo | Seção | Mudança |
+   |---|---|---|
+   | `config.yml` | `rules-version` | 2 → 3 (ou +1, se você gerencia o número) |
+   | `config.yml` | `tiers` | 0 / 300 / 700 / 1200 / 1800 / 2400 / 3000 → 0 / 150 / 350 / 600 / 900 / 1200 / 1400 |
+   | `config.yml` | `display` | removida (`details-max-items` não existe mais) |
+   | `messages.yml` | `details` | passa a listar as cinco peças, com o nome do lugar |
+   | `messages.yml` | `slot` | nova: nomes de capacete, peitoral, calça, bota e arma |
+
+   Pesos de encantamentos (`enchantments`), bases (`armor`, `weapons`) e as
+   demais mensagens **não mudam** em relação à 2.0.0.
+
+   Vindo da 1.x, mudam também `enchantments` (cada encantamento no grupo da
+   peça que o recebe), `evaluation` (`weapon-slots` deixa de existir), `summary`
+   e `prefix` (mensagens curtas).
+
+5. Revise as seções que o console listar como mantidas. A mais importante é
+   **`tiers`**: se você a personalizou na 2.0.0, as faixas estão na escala da
+   soma do inventário e ficam altas demais para o melhor conjunto (máximo perto
+   de 1400).
+6. Nenhuma alteração no banco é necessária.
+7. **Pontuações:** quem está online no New Era é reavaliado ao entrar. Os
+   demais mantêm a pontuação antiga, da regra anterior, até entrarem de novo no
+   New Era — o plugin não tem acesso ao inventário de quem está offline e não
+   estima valores. A coluna `rules_version` distingue os casos:
 
    ```sql
    SELECT rules_version, COUNT(*) FROM gearscore_players GROUP BY rules_version;
    ```
 
-   Enquanto houver linhas com a versão antiga, o ranking mistura as duas
-   escalas. Para começar o ranking do zero, apague-as com o servidor parado:
+   Enquanto houver linhas de versões antigas, o ranking mistura escalas (as da
+   2.0.0 são bem maiores). Para começar o ranking do zero, apague-as com o
+   servidor parado:
 
    ```sql
-   DELETE FROM gearscore_players WHERE rules_version < 2;
+   DELETE FROM gearscore_players WHERE rules_version < 3;
    ```
 
-7. Para a sidebar do TAB, siga [TAB.md](TAB.md).
+8. Para a sidebar do TAB, siga [TAB.md](TAB.md).
 
 Para desfazer: pare o servidor, restaure os arquivos `.bak-...` e volte o JAR
 anterior.

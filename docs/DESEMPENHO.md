@@ -8,7 +8,7 @@ foi efetivamente medido.
 > | Ambiente | Situação |
 > |---|---|
 > | Servidor Paper real, com jogadores reais ou bots | **não executado** |
-> | MariaDB real | **executado na versão 1.1.0**: MariaDB 10.4.32 local, toda a suíte de persistência, planos e tempos das consultas, e o driver embutido no JAR. A camada de banco não mudou na 2.0.0 e esses testes **não foram repetidos** nela; a suíte de persistência da 2.0.0 rodou em H2 |
+> | MariaDB real | **executado na versão 1.1.0**: MariaDB 10.4.32 local, toda a suíte de persistência, planos e tempos das consultas, e o driver embutido no JAR. A camada de banco não mudou desde então e esses testes **não foram repetidos**; a suíte de persistência da 3.0.0 rodou em H2 |
 > | TAB do proxy via TAB-Bridge | **não executado** (sem acesso à rede) |
 > | Simulação em JVM, sem Paper | **executado**: fila de avaliações, cálculo, cache, atualização dos servidores de consulta |
 >
@@ -92,6 +92,15 @@ a frequência das consultas.
 * Recarregar as regras reavalia só os jogadores online, respeitando o limite
   por tick. Jogadores offline não são varridos.
 
+## Custos da versão 3.0.0
+
+A leitura continua a mesma da 2.0.0 (41 slots, uma vez cada). O que muda é o
+cálculo: em vez de somar todos os equipamentos válidos, o plugin pontua cada
+um e guarda o melhor de cada um dos cinco lugares — uma comparação a mais por
+item, sem ordenação. Carregar mais equipamentos válidos ainda muda a
+assinatura do inventário e provoca um recálculo, mas, se o melhor conjunto é o
+mesmo, **nada é gravado**.
+
 ## Custos acrescentados na versão 2.0.0
 
 | Mudança | Custo |
@@ -173,21 +182,21 @@ Cenários:
 
 | Cenário | Jogadores | Eventos | Agrupados | Leituras | Sem mudança | Recalculados | Média µs/tick | p99 µs/tick | Máx. µs/tick | Mudanças de pontuação | Lotes SQL | Linhas gravadas |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Combate | 50 | 12 149 | 8 149 | 3 970 | 3 843 | 127 | 14,6 | 151,7 | 1 905,4 | 127 | 20 | 123 |
-| Combate | 100 | 24 298 | 16 298 | 7 920 | 7 664 | 256 | 11,8 | 67,6 | 1 689,1 | 256 | 20 | 249 |
-| Combate | 200 | 48 582 | 32 582 | 15 820 | 15 320 | 500 | 13,6 | 65,2 | 155,4 | 500 | 21 | 483 |
-| Troca rápida | 50 | 30 000 | 25 000 | 4 970 | 1 653 | 3 317 | 22,4 | 164,9 | 312,0 | 3 317 | 20 | 995 |
-| Troca rápida | 100 | 60 000 | 50 000 | 9 920 | 3 272 | 6 648 | 24,5 | 111,8 | 336,7 | 6 648 | 20 | 1 991 |
-| Troca rápida | 200 | 120 000 | 100 000 | 19 820 | 6 431 | 13 389 | 31,0 | 77,0 | 101,7 | 13 389 | 40 | 3 985 |
-| Movimentação | 50 | 30 000 | 25 000 | 4 970 | 4 920 | 50 | 6,4 | 41,4 | 159,2 | 50 | 1 | 50 |
-| Movimentação | 100 | 60 000 | 50 000 | 9 920 | 9 820 | 100 | 25,0 | 147,2 | 314,4 | 100 | 1 | 100 |
-| Movimentação | 200 | 120 000 | 100 000 | 19 820 | 19 620 | 200 | 25,7 | 126,5 | 835,9 | 200 | 2 | 200 |
+| Combate | 50 | 12 149 | 8 149 | 3 970 | 3 843 | 127 | 18,9 | 171,6 | 927,8 | 127 | 20 | 123 |
+| Combate | 100 | 24 298 | 16 298 | 7 920 | 7 664 | 256 | 9,0 | 45,8 | 263,3 | 256 | 20 | 249 |
+| Combate | 200 | 48 582 | 32 582 | 15 820 | 15 320 | 500 | 21,1 | 149,1 | 395,3 | 500 | 21 | 483 |
+| Troca rápida | 50 | 30 000 | 25 000 | 4 970 | 1 653 | 3 317 | 17,5 | 118,3 | 594,2 | 3 317 | 20 | 995 |
+| Troca rápida | 100 | 60 000 | 50 000 | 9 920 | 3 272 | 6 648 | 23,4 | 93,7 | 1 155,6 | 6 648 | 20 | 1 991 |
+| Troca rápida | 200 | 120 000 | 100 000 | 19 820 | 6 431 | 13 389 | 33,9 | 89,1 | 494,9 | 13 389 | 40 | 3 985 |
+| Movimentação | 50 | 30 000 | 25 000 | 4 970 | 4 920 | 50 | 8,4 | 62,5 | 221,0 | 50 | 1 | 50 |
+| Movimentação | 100 | 60 000 | 50 000 | 9 920 | 9 820 | 100 | 26,0 | 160,1 | 259,6 | 100 | 1 | 100 |
+| Movimentação | 200 | 120 000 | 100 000 | 19 820 | 19 620 | 200 | 23,6 | 97,8 | 419,3 | 200 | 2 | 200 |
 
 Leitura dos resultados, dentro dos limites da simulação:
 
-* Um tick tem 50 000 µs. Nos cenários medidos, a média ficou entre 6 e 31 µs
-  por tick e o p99 abaixo de 170 µs.
-* Os valores máximos isolados (até 1,9 ms) apareceram também em cenários leves
+* Um tick tem 50 000 µs. Nos cenários medidos, a média ficou entre 8 e 34 µs
+  por tick e o p99 abaixo de 175 µs.
+* Os valores máximos isolados (até 1,2 ms) apareceram também em cenários leves
   e são compatíveis com pausas da própria JVM (GC/JIT) durante a medição; a
   simulação não os separa do código do plugin.
 * O agrupamento absorveu de 67% a 83% dos eventos antes de qualquer leitura.
@@ -259,10 +268,10 @@ Verificado nos testes automatizados (H2; na 1.1.0, também MariaDB 10.4.32):
 ### Memória
 
 Medição aproximada por diferença de heap após GC, com 2000 jogadores
-simulados com 14 equipamentos cada: **cerca de 4 KB por jogador acompanhado**
-(estado, último snapshot e resultado com detalhamento). O valor cresce com a
-quantidade de equipamentos válidos no inventário, até o limite de 41. Para 200
-jogadores isso representa cerca de 1 MB. Os dados são removidos
+simulados com 14 equipamentos cada: **cerca de 3 KB por jogador acompanhado**
+(estado, último snapshot e o resultado com as cinco peças escolhidas). O
+snapshot cresce com a quantidade de equipamentos válidos no inventário, até o
+limite de 41. Para 200 jogadores isso representa menos de 1 MB. Os dados são removidos
 quando o jogador sai.
 
 Em servidores de consulta o custo por jogador é menor: um registro com a

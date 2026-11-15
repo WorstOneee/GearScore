@@ -1,21 +1,37 @@
 # Fórmula e balanceamento
 
-O GearScore é uma **estimativa da força dos equipamentos que o jogador
-carrega**. Ele não mede habilidade, poções, comida, totens nem posicionamento.
+O GearScore é uma **estimativa da força do melhor conjunto que o jogador
+consegue montar** com o que carrega. Ele não mede habilidade, poções, comida,
+totens nem posicionamento.
 
 ## Fórmula
 
 ```
-GearScore = soma de todos os equipamentos válidos carregados
-equipamento = base (material e tipo) + encantamentos
+GearScore = melhor capacete + melhor peitoral + melhor calça + melhor bota + melhor arma
+peça      = base (material e tipo) + encantamentos
 ```
 
-Internamente a soma é separada em quatro parcelas (base e encantamentos das
-armaduras, base e encantamentos das armas). Cada parcela é somada com casas
-decimais e arredondada uma única vez; o total é a soma das quatro. O que o
-`/gs` mostra sempre fecha com o `/gs detalhes`.
+Para cada um dos cinco lugares, o plugin pontua todos os candidatos que o
+jogador carrega e fica com o de **maior pontuação completa**.
 
-### O que é lido
+* A escolha é pelo total da peça (material + encantamentos + regra de item
+  personalizado), nunca só pelo material ou pela quantidade de encantamentos.
+  Um peitoral de diamante com Proteção IV (225) vence um de netherita sem
+  encantamentos (90).
+* Uma peça guardada no inventário pode vencer a que está equipada.
+* A "melhor arma" disputa entre todos os tipos configurados: espada, machado,
+  mace, tridente, arco, besta e lança.
+* Peças não escolhidas **não somam**. Carregar dez espadas, ou uma segunda
+  armadura, dá o mesmo resultado que carregar só as melhores.
+* Em caso de empate entre duas peças, a escolha é sempre a mesma, qualquer que
+  seja a posição dos itens.
+* Um lugar sem candidato vale zero.
+
+As quatro parcelas internas (base e encantamentos das armaduras, base e
+encantamentos da arma) são somadas com casas decimais e arredondadas uma única
+vez; o total é a soma delas. O `/gs` sempre fecha com o `/gs detalhes`.
+
+### Onde o plugin procura
 
 | Lido | Slots |
 |---|---:|
@@ -23,13 +39,9 @@ decimais e arredondada uma única vez; o total é a soma das quatro. O que o
 | Armadura equipada | 4 |
 | Mão secundária | 1 |
 
-* Cada slot é lido **uma vez**. A mão principal é um slot da hotbar e não é
-  contada de novo.
-* Itens iguais em slots diferentes são equipamentos distintos: duas espadas
-  iguais valem o dobro de uma.
-* Armaduras guardadas no inventário pontuam como as equipadas.
-* O lugar do item não importa: mover um equipamento de slot, equipar ou
-  desequipar não muda a pontuação nem gera gravação.
+Cada slot é lido uma vez. A mão principal é um slot da hotbar e não é lida de
+novo. O lugar do item não importa: mover equipamentos de slot, equipar ou
+desequipar não muda a pontuação nem gera gravação.
 
 ### O que não é lido
 
@@ -42,7 +54,7 @@ Somente os materiais listados em `armor` e `weapons` do `config.yml` e os itens
 personalizados reconhecidos por PDC. Um item é admitido **pelo material**, antes
 de qualquer leitura de encantamento.
 
-Não pontuam, mesmo com encantamentos ou brilho: blocos, comida, recursos,
+Não pontuam nem disputam lugar, mesmo com encantamentos ou brilho: blocos, comida, recursos,
 livros encantados, ferramentas (picareta, pá, enxada), escudo, vara de pescar e
 qualquer outro item fora da lista. Nome, lore, CustomModelData e brilho visual
 (`enchantment_glint_override`) nunca são lidos.
@@ -255,47 +267,44 @@ automatizados.
 | Arco (50) + Infinidade | 15 | **65** |
 | Botas de netherita (45) + Peso-Pena IV | 40 | **85** |
 
-### Inventários completos
+### Conjuntos completos
 
-| Inventário | Armaduras | Armas | **Total** | Faixa |
-|---|---:|---:|---:|---|
-| Ferro completo sem encantamentos + espada de ferro | 140 | 45 | **185** | Iniciante |
-| Diamante Proteção IV + espada de diamante Afiação V | 820 | 220 | **1040** | Guerreiro |
-| Netherita completa encantada¹, sem armas | 1046 | 0 | **1046** | Guerreiro |
-| Netherita completa encantada¹ + espada completa² | 1046 | 359 | **1405** | Veterano |
-| O anterior + machado³ e arco⁴ | 1046 | 862 | **1908** | Elite |
-| Netherita completa encantada¹ + espada, machado, arco, besta⁵, mace⁶ e tridente⁷ | 1046 | 1590 | **2636** | Lendário |
-| O anterior + segunda armadura de netherita com Proteção IV guardada | 1911 | 1590 | **3501** | Mítico |
+| O que o jogador carrega | Armaduras | Arma escolhida | **Total** | Faixa |
+|---|---:|---|---:|---|
+| Ferro completo sem encantamentos + espada de ferro | 140 | espada de ferro, 45 | **185** | Aprendiz |
+| Diamante Proteção II + espada de diamante Afiação II | 480 | espada de diamante, 115 | **595** | Guerreiro |
+| Diamante Proteção IV + espada de diamante Afiação V | 820 | espada de diamante, 220 | **1040** | Elite |
+| Netherita Prot. IV / Inq. III / Remendo + espada de netherita sem encantamentos | 973 | espada de netherita, 80 | **1053** | Elite |
+| Netherita completa encantada¹ + espada completa² | 1046 | espada de netherita, 359 | **1405** | Mítico |
+| O mesmo, carregando também machado, arco, besta e tridente | 1046 | espada de netherita, 359 | **1405** | Mítico |
+| O mesmo, carregando também uma mace³ | 1046 | mace, 367 | **1413** | Mítico |
+| O anterior + uma segunda armadura de netherita com Proteção IV guardada | 1046 | mace, 367 | **1413** | Mítico |
+| Ferro vestido, a armadura de netherita encantada¹ guardada + espada completa² | 1046 | espada de netherita, 359 | **1405** | Mítico |
 
 ¹ Quatro peças com Proteção IV, Inquebrável III e Remendo; botas também com
 Peso-Pena IV, Passos Profundos III e Velocidade das Almas III.
 ² Afiação V, Aspecto Flamejante II, Repulsão II, Alcance III, Saque III,
 Inquebrável III e Remendo.
-³ Netherita, Afiação V, Inquebrável III, Remendo.
-⁴ Força V, Chama, Impacto II, Infinidade, Inquebrável III.
-⁵ Carga Rápida III, Perfuração IV, Inquebrável III, Remendo.
-⁶ Densidade V, Rajada de Vento III, Inquebrável III, Remendo.
-⁷ Lealdade III, Canalização, Empalamento V, Inquebrável III, Remendo.
+³ Densidade V, Rajada de Vento III, Inquebrável III, Remendo.
+
+As linhas 5 a 8 mostram a regra: armas e armaduras a mais só mudam o resultado
+quando uma delas é **melhor** que a escolhida (a mace, por 8 pontos). A última
+linha mostra que a peça guardada vale tanto quanto a equipada.
 
 ## Faixas
 
 | Faixa | A partir de |
 |---|---:|
 | Iniciante | 0 |
-| Aprendiz | 300 |
-| Guerreiro | 700 |
-| Veterano | 1200 |
-| Elite | 1800 |
-| Lendário | 2400 |
-| Mítico | 3000 |
+| Aprendiz | 150 |
+| Guerreiro | 350 |
+| Veterano | 600 |
+| Elite | 900 |
+| Lendário | 1200 |
+| Mítico | 1400 |
 
-A escala é maior que a da regra antiga (melhor arma apenas) porque agora tudo o
-que o jogador carrega soma. As faixas foram redefinidas com base nos exemplos
-acima; ajuste `tiers` ao perfil do servidor.
-
-Consequência da regra: quem carrega mais equipamentos válidos pontua mais,
-mesmo que não use todos. Se isso distorcer o ranking, baixe
-`weapons.type-multipliers` dos tipos acumulados ou as bases em `armor.materials`.
+Com a tabela padrão, o melhor conjunto possível fica perto de 1400. Ajuste
+`tiers` ao perfil do servidor.
 
 ## Como ajustar
 

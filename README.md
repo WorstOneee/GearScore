@@ -15,13 +15,17 @@ potions or positioning and is not a prediction of who wins a fight.
 ## How the score is built
 
 ```
-GearScore = sum of every valid piece of gear the player carries
+GearScore = best helmet + best chestplate + best leggings + best boots + best weapon
 piece     = base (material and type) + enchantments
 ```
 
-* Read: the 36 inventory slots (hotbar included), the 4 armor slots and the off
-  hand, each slot exactly once. Equal items in different slots each count, and
-  armor kept in the inventory scores too.
+* The plugin looks at everything the player carries — the 36 inventory slots
+  (hotbar included), the 4 armor slots and the off hand, each slot once — and
+  keeps, for each of the five places, the item with the highest full score.
+* A piece kept in the inventory can beat the one that is worn, and the best
+  weapon is chosen across every configured weapon type.
+* Items that are not selected add nothing: ten swords, or a spare armor set,
+  score the same as the best ones alone.
 * Not read: ender chest, open containers, the cursor, the crafting grid and the
   contents of shulker boxes or other containers.
 * Only configured materials (and custom items recognised by PDC) are gear.
@@ -89,7 +93,7 @@ player's individual position always agree.
 GearScore » zWorstOne • 1125 GS • Elite
 ```
 
-Breakdowns live in `/gs detalhes`, technical data in `/gs diag`. The plugin
+`/gs detalhes` shows the five selected pieces; technical data stays in `/gs diag`. The plugin
 never sends a message when a score changes. All texts are configurable.
 
 ## Placeholders and the TAB sidebar
@@ -125,7 +129,7 @@ clocked step, so a faster TAB or hologram refresh never means more queries.
 ./mvnw clean package
 ```
 
-The plugin JAR is written to `target/GearScore-2.0.0.jar`. MariaDB Connector/J
+The plugin JAR is written to `target/GearScore-3.0.0.jar`. MariaDB Connector/J
 and the connection pool are shaded into it.
 
 ```bash

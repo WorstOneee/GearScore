@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.0.0
+
+### Changed
+
+* **The score is the best set the player can assemble.** The plugin still looks
+  at the 36 inventory slots, the 4 armor slots and the off hand, but now keeps
+  only the best helmet, chestplate, leggings, boots and weapon, each chosen by
+  its full score (material, enchantments, custom rule), and adds those five. A
+  piece kept in the inventory can beat the worn one; the best weapon is chosen
+  across all weapon types. Items that are not selected add nothing, so
+  duplicates and spare gear no longer raise the score.
+* `/gs detalhes` shows the five selected pieces with their points.
+* **Tiers** return to the single-set scale (0 / 150 / 350 / 600 / 900 / 1200 /
+  1400) and `rules-version` is now 3.
+* The `display` section (`details-max-items`) was removed.
+
+Enchantment weights, base values and the remaining messages are unchanged from
+2.0.0.
+
+### Upgrading
+
+Replace the JAR on every server and restart. `config.yml` and `messages.yml`
+are updated on first start with a backup; customised sections are kept, so
+review `tiers` if the console lists it. See `docs/INSTALACAO.md`.
+
 ## 2.0.0
 
 ### Changed
