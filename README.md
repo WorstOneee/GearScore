@@ -9,7 +9,7 @@ number with a tier, a ranking and PlaceholderAPI placeholders.
 The number is an **estimate of gear strength**. It does not measure skill,
 potions or positioning and is not a prediction of who wins a fight.
 
-* Paper 1.21.11 · Java 21 · MariaDB/MySQL · works behind Velocity
+* Paper 1.21.11 · Java 21 · MariaDB · works behind Velocity
 * Optional: PlaceholderAPI
 
 ## How the score is built
@@ -50,12 +50,21 @@ server:
 ```
 
 Official sources evaluate equipment and persist the result. Every other server
-(hub, events) never reads inventories and never writes; it only reads the
-official score from the database. Temporary kits elsewhere cannot overwrite it.
-Nothing is installed on the proxy.
+(hub, events) never reads inventories and never writes, so temporary kits
+elsewhere cannot overwrite the official score.
+
+Those servers keep the official score of their online players fresh from the
+database: on join, again a few seconds later (the origin server may still be
+flushing its write when the player arrives), and then on a slow shared
+interval. Reads are grouped by primary key and capped per cycle; late answers
+never replace newer data or repopulate a session that ended. The shared
+database is the only link between servers: nothing is installed on the proxy
+and no extra service is needed.
 
 The ranking reflects the last evaluated equipment of each player, with its
-update time. It is not an all-time best.
+update time. It is not an all-time best. One ordering is used everywhere —
+score descending, then the earlier update, then UUID — so the list and each
+player's individual position always agree.
 
 ## Commands
 
@@ -74,22 +83,22 @@ update time. It is not an all-time best.
 `%gearscore_tier%`, `%gearscore_tier_colored%`, `%gearscore_tier_id%`,
 `%gearscore_position%`
 
-Placeholders are served from memory. The plugin supplies values to TAB and
-hologram plugins and does not drive those displays itself.
+Every placeholder, the ranking position included, only reads memory: no SQL, no
+task, no inventory access, no waiting. Positions are refreshed by a separate
+clocked step, so a faster TAB or hologram refresh never means more queries.
 
 ## Performance design
 
-* No repeating scan of players or inventories, no movement events.
+* No inventory scans, no movement events, no per-player tasks.
 * Change events are filtered in constant time (amount and durability changes
-  are dropped), debounced per player and processed under a per-tick limit by a
-  task that only exists while work is queued.
+  are dropped), debounced per player and processed in due order under a
+  per-tick limit by a task that only exists while work is queued.
 * Only 4 armor slots, the hotbar and the off hand are read, on the server
   thread, into a minimal snapshot that doubles as a change signature.
 * Rules are pre-processed at load time.
-* Online lookups and placeholders never touch SQL or an inventory.
 * Writes are consolidated per player and batched on one dedicated thread, with
-  a bounded queue, exponential backoff and rate-limited logging.
-* Bounded, cached reads for offline lookups and the ranking.
+  a hard memory bound, exponential backoff and rate-limited logging.
+* Bounded, cached, grouped reads; the ranking is read in index order.
 
 ## Build
 
@@ -97,7 +106,8 @@ hologram plugins and does not drive those displays itself.
 ./mvnw clean package
 ```
 
-The plugin JAR is written to `target/GearScore-1.0.0.jar`.
+The plugin JAR is written to `target/GearScore-1.1.0.jar`. MariaDB Connector/J
+and the connection pool are shaded into it.
 
 ```bash
 ./mvnw test
@@ -107,21 +117,29 @@ The plugin JAR is written to `target/GearScore-1.0.0.jar`.
 ./mvnw test -Pbench
 ```
 
-The second command runs the simulated load test.
+```bash
+./mvnw test -Pmariadb "-Dgearscore.test.jdbc=jdbc:mariadb://127.0.0.1:3306/gstest?user=USER&password=PASSWORD"
+```
+
+The second command runs the simulated load test; the third runs the whole suite
+plus query-plan and timing checks against a real MariaDB test database.
 
 ## Testing status
 
-Automated tests cover the scoring rules, the evaluation pipeline and the
-persistence layer (against H2 in MySQL compatibility mode), and a simulated
-load test covers 50, 100 and 200 players. The plugin has **not** been measured
-on a live Paper server or against a real MariaDB instance; see the performance
-document for what the numbers do and do not show.
+* Automated tests cover the scoring rules, the evaluation queue and pipeline,
+  the query-server refresh and the persistence layer.
+* The persistence tests pass on H2 (MySQL mode) and on a real MariaDB 10.4.32,
+  where the schema upgrade, query plans and query times were also checked.
+* A simulated load test covers 50, 100 and 200 players.
+* The plugin has **not** been measured on a live Paper server. See the
+  performance document for what each number does and does not show.
 
 ## Documentation
 
 The server documentation is written in Portuguese.
 
-* [Instalação](docs/INSTALACAO.md) — setup, commands, permissions, placeholders
+* [Instalação](docs/INSTALACAO.md) — setup, commands, permissions, placeholders, upgrading
 * [Fórmula e balanceamento](docs/FORMULA.md) — formula, default tables, worked examples
-* [Banco de dados](docs/BANCO.md) — schema, migrations, queries, failure handling
+* [Banco de dados](docs/BANCO.md) — schema, migrations, ranking order, query plans
 * [Desempenho](docs/DESEMPENHO.md) — design, measurements, how to measure on a server
+* [Changelog](CHANGELOG.md)
