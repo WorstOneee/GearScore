@@ -2,6 +2,7 @@ package br.com.serpens.gearscore.bench;
 
 import br.com.serpens.gearscore.TestRules;
 import br.com.serpens.gearscore.engine.Metrics;
+import br.com.serpens.gearscore.engine.RemoteScores;
 import br.com.serpens.gearscore.engine.ScoreEngine;
 import br.com.serpens.gearscore.model.PlayerRecord;
 import br.com.serpens.gearscore.score.GearSnapshot;
@@ -22,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Logger;
 
 import static br.com.serpens.gearscore.TestRules.armorSet;
@@ -203,6 +205,7 @@ class EngineBenchmark {
             }
         }
         memory();
+        queryServer();
         outage();
     }
 
@@ -249,6 +252,58 @@ class EngineBenchmark {
                 (after - before) / 1024.0 / simulation.players.size(), simulation.engine.trackedCount());
     }
 
+    /**
+     * A server that only reads the official score: players join over the first minute and
+     * stay for ten. The database is a map; what is measured is the scheduling work on the
+     * server thread and how many grouped reads it asks for.
+     */
+    private void queryServer() {
+        System.out.println("BENCH-QUERY | players | polls (1/s) | grouped reads | players per read "
+                + "| avg us/poll | max us/poll |");
+        for (int count : new int[]{50, 100, 200}) {
+            Map<UUID, PlayerRecord> rows = new HashMap<>();
+            long[] reads = new long[2];
+            RemoteScores remote = new RemoteScores(new RemoteScores.Loader() {
+                @Override
+                public boolean available() {
+                    return true;
+                }
+
+                @Override
+                public CompletableFuture<Map<UUID, PlayerRecord>> load(List<UUID> ids) {
+                    reads[0]++;
+                    reads[1] += ids.size();
+                    Map<UUID, PlayerRecord> found = new HashMap<>();
+                    for (UUID id : ids) {
+                        found.put(id, rows.get(id));
+                    }
+                    return CompletableFuture.completedFuture(found);
+                }
+            }, new Metrics(), 5_000L, 30_000L, 100, 3);
+
+            int polls = 600;
+            long total = 0L;
+            long max = 0L;
+            int joined = 0;
+            for (int second = 0; second < polls; second++) {
+                long now = second * 1_000L;
+                long start = System.nanoTime();
+                // Joins spread over the first 60 seconds.
+                while (joined < count && joined * 60L / count <= second) {
+                    UUID id = new UUID(9L, joined++);
+                    rows.put(id, new PlayerRecord(id, "P", 1000, 800, 200, "elite", "newera", 1, 1L));
+                    remote.open(id, now);
+                }
+                remote.poll(now);
+                long elapsed = System.nanoTime() - start;
+                total += elapsed;
+                max = Math.max(max, elapsed);
+            }
+            System.out.printf(Locale.ROOT, "BENCH-QUERY | %d | %d | %d | %.1f | %.1f | %.1f |%n", count, polls,
+                    reads[0], reads[1] / (double) reads[0], total / (double) polls / 1000.0, max / 1000.0);
+        }
+    }
+
     private static long usedHeap() {
         Runtime runtime = Runtime.getRuntime();
         for (int i = 0; i < 4; i++) {
@@ -269,7 +324,7 @@ class EngineBenchmark {
         source.down = true;
         Database database = source.open(metrics, 2000L, 60_000L);
         Logger logger = Logger.getLogger("GearScoreTest");
-        WriteQueue writer = new WriteQueue(database, new ScoreRepository("gearscore_"), metrics, logger,
+        WriteQueue writer = new WriteQueue(database, new ScoreRepository(source.prefix()), metrics, logger,
                 50L, BATCH_SIZE, 5000);
 
         Simulation simulation = new Simulation(200, writer::submit);
