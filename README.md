@@ -120,7 +120,10 @@ clocked step, so a faster TAB or hologram refresh never means more queries.
   position-independent snapshot that doubles as a change signature.
 * Rules are pre-processed at load time.
 * Writes are consolidated per player and batched on one dedicated thread, with
-  a hard memory bound, exponential backoff and rate-limited logging.
+  a hard memory bound, exponential backoff and rate-limited logging. A result
+  counts as persisted only after its transaction commits; anything the queue
+  refuses or drops is submitted again from memory, and unconfirmed writes
+  survive a restart.
 * Bounded, cached, grouped reads; the ranking is read in index order.
 
 ## Build
@@ -129,7 +132,7 @@ clocked step, so a faster TAB or hologram refresh never means more queries.
 ./mvnw clean package
 ```
 
-The plugin JAR is written to `target/GearScore-3.0.0.jar`. MariaDB Connector/J
+The plugin JAR is written to `target/GearScore-3.0.1.jar`. MariaDB Connector/J
 and the connection pool are shaded into it.
 
 ```bash
@@ -152,8 +155,8 @@ plus query-plan and timing checks against a real MariaDB test database.
 * Automated tests cover the scoring rules, enchantment applicability, the
   evaluation queue and pipeline, the query-server refresh, placeholders, the
   configuration updater and the persistence layer (on H2 in MySQL mode).
-* Version 1.1.0's persistence layer, unchanged since, also passed on a real
-  MariaDB 10.4.32, including the schema upgrade and query plans.
+* The whole suite, write recovery included, also passes on a real MariaDB
+  10.4.32, where the schema upgrade and query plans were checked.
 * A simulated load test covers 50, 100 and 200 players.
 * The plugin has **not** been run on a live Paper server, and the TAB sidebar
   has **not** been verified on a real proxy. See the performance and TAB

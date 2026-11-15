@@ -30,7 +30,7 @@ O driver MariaDB vem embutido no JAR; não há nada a instalar.
 
 ## 2. Instalar o JAR
 
-1. Copie `GearScore-3.0.0.jar` para a pasta `plugins/` de **cada** servidor
+1. Copie `GearScore-3.0.1.jar` para a pasta `plugins/` de **cada** servidor
    Paper que deve mostrar a pontuação (New Era, hub, eventos...).
 2. Inicie o servidor uma vez para gerar `plugins/GearScore/`.
 3. Edite `database.yml` (mesmos dados em todos os servidores) e `config.yml`.
@@ -191,7 +191,7 @@ de configuração, está em [TAB.md](TAB.md).
 ./mvnw clean package
 ```
 
-O JAR sai em `target/GearScore-3.0.0.jar`. Para rodar o teste de carga
+O JAR sai em `target/GearScore-3.0.1.jar`. Para rodar o teste de carga
 simulado:
 
 ```bash
@@ -205,11 +205,17 @@ teste cria e remove tabelas com prefixo próprio):
 ./mvnw test -Pmariadb "-Dgearscore.test.jdbc=jdbc:mariadb://127.0.0.1:3306/gstest?user=USUARIO&password=SENHA"
 ```
 
-## Atualizando para a 3.0.0
+## Atualizando para a 3.0.1
 
-Vale para quem está em qualquer versão anterior.
+Vale para quem está em qualquer versão anterior. Para quem já está na 3.0.0 é
+só trocar o JAR: a 3.0.1 corrige a recuperação de gravações e não muda
+configuração, mensagens, cálculo nem o esquema do banco. Ela passa a criar,
+quando necessário, o arquivo `plugins/GearScore/pending-writes.dat` (veja
+[BANCO.md](BANCO.md)); não o edite nem o apague com o servidor ligado.
 
-1. Pare o servidor, troque o JAR por `GearScore-3.0.0.jar` em **todos** os
+Os passos abaixo descrevem a atualização vinda de versões anteriores à 3.0.0.
+
+1. Pare o servidor, troque o JAR por `GearScore-3.0.1.jar` em **todos** os
    servidores (New Era, hub, eventos) e inicie.
 2. Na primeira inicialização o plugin atualiza `config.yml` e `messages.yml`
    sozinho:

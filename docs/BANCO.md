@@ -157,32 +157,121 @@ sorteados do restante da tabela.
 
 Nenhuma thread é criada por jogador ou por evento.
 
-## Falhas
+## Falhas e recuperação de gravações
 
-* Se o banco cair, as gravações ficam pendentes na memória, **uma por
-  jogador** (o estado mais recente substitui o anterior), até
-  `writes.max-pending`. O limite vale também quando um lote que falhou volta
-  para a fila: ele entra antes do que chegou depois, nunca substitui um estado
-  mais novo do mesmo jogador e, se faltar espaço, o que sai é o mais antigo.
+### Estágios de um resultado
+
+| Estágio | Significado |
+|---|---|
+| calculado | o servidor oficial avaliou o jogador e guarda o resultado em memória |
+| na fila | a fila de gravação aceitou o resultado |
+| confirmado | a transação que o gravou foi concluída no banco |
+
+Um resultado só é tratado como persistido quando está **confirmado**. Cada
+resultado tem um número de sequência; uma confirmação antiga não confirma um
+resultado mais novo do mesmo jogador, e avisos de uma sessão anterior (saída e
+reconexão) são ignorados.
+
+### Fila cheia
+
+A fila guarda no máximo `writes.max-pending` jogadores, um resultado por
+jogador (o mais recente substitui o anterior, sem ocupar lugar novo). Quando
+ela está cheia:
+
+| Quem chega | O que acontece |
+|---|---|
+| jogador online | o resultado **não entra**, mas continua guardado no servidor e é reenviado depois |
+| jogador que está saindo, ou encerramento do servidor | o resultado entra no lugar de um resultado de jogador online, que é avisado e reenviado depois |
+| jogador que está saindo, com a fila ocupada só por jogadores que já saíram | o resultado mais antigo da fila é perdido |
+
+Só o último caso perde dados, e ele é contado em "perdidas" no `/gs diag` e
+avisado no console (no máximo uma vez por minuto). A pontuação desse jogador é
+corrigida na próxima vez que ele entrar no servidor oficial.
+
+### Reenvio
+
+Enquanto houver gravação na fila ou resultado aguardando reenvio, uma tarefa
+de 1 segundo reenvia até 50 resultados por ciclo, na ordem em que ficaram
+devendo, e apenas se a fila tiver lugar. O reenvio:
+
+* usa o resultado já calculado — não lê o inventário de novo;
+* não depende de o jogador mexer no inventário nem usar comandos;
+* dá um lugar por jogador na lista, então quem muda de equipamento o tempo
+  todo não passa na frente dos outros;
+* não insiste com o banco fora do ar: sem lugar na fila, nada é tentado, e a
+  fila só esvazia quando o banco volta (respeitando a espera progressiva).
+
+### Banco fora do ar
+
+* As gravações ficam pendentes na fila até `writes.max-pending`; o excedente
+  fica devendo no servidor (jogadores online) conforme a tabela acima.
 * As tentativas seguem espera progressiva (`retry.initial-delay-ms` dobrando
   até `retry.max-delay-ms`). Durante a espera, leituras falham na hora em vez
   de aguardar o timeout de conexão, e as atualizações periódicas não são
   enviadas.
+* Um lote que falha volta para a fila sem ultrapassar o limite e sem
+  substituir um resultado mais novo do mesmo jogador.
 * O log registra a falha no máximo uma vez por minuto, com a contagem de
   mensagens suprimidas, e avisa quando a conexão volta.
 * Jogadores online continuam consultáveis pelo cache (`/gs`, `/gs detalhes`,
   placeholders). Ranking e consulta de offline respondem que o banco está
   indisponível; o ranking continua servindo o último resultado lido, se houver.
-* Quando o banco volta, gravações, atualizações dos servidores de consulta e
-  posições são retomadas sozinhas.
-* No desligamento, o plugin tenta gravar o que está pendente por até
-  `shutdown-timeout-seconds` e nunca bloqueia além disso. O que não foi gravado
-  é recalculado na próxima vez que o jogador entrar em um servidor oficial.
+* Quando o banco volta, gravações, reenvios, atualizações dos servidores de
+  consulta e posições são retomados sozinhos.
+
+### Proteção no banco
+
+A gravação só substitui uma linha se o resultado for **tão ou mais recente**
+que o já gravado (`updated_at`). Uma nova tentativa atrasada, um lote
+restaurado ou um registro lido do arquivo de pendências nunca desfaz uma
+gravação mais nova.
+
+### Arquivo de pendências
+
+`plugins/GearScore/pending-writes.dat` guarda as gravações ainda não
+confirmadas, para que sobrevivam a um reinício.
+
+| Quando | O que acontece |
+|---|---|
+| banco fora do ar | o conteúdo da fila é regravado no arquivo, no máximo a cada 30 s |
+| encerramento do servidor | o que está pendente é salvo antes da última tentativa de gravação; ao final, o arquivo fica só com o que não foi confirmado |
+| fila esvaziada com sucesso | o arquivo é apagado |
+| inicialização | o arquivo é lido fora da thread principal e os registros entram na fila, sem substituir resultados mais novos |
+
+O arquivo é sempre reescrito por inteiro a partir da fila (por isso não
+cresce) e nunca tem mais registros que `writes.max-pending`. A leitura e a
+escrita acontecem na thread de gravação do banco, nunca na thread principal.
+
+### Garantias e limites
+
+| Situação | Resultado |
+|---|---|
+| fila cheia, jogador online | recuperado pelo reenvio |
+| jogador saiu com gravação pendente ou recusada | gravado quando houver lugar e banco |
+| banco fora do ar, servidor continua ligado | gravado quando o banco volta |
+| encerramento normal com pendências | salvo em disco e gravado na próxima inicialização |
+| queda do servidor (sem encerramento normal) | recupera o que estava no arquivo, com até 30 s de defasagem; se o banco estava normal, não havia arquivo e o que estava na fila (até `flush-interval-ms`) se perde |
+| fila cheia só de jogadores que já saíram | o mais antigo é perdido e contado |
+| arquivo de pendências danificado ou apagado | linhas ilegíveis são ignoradas |
+
+Em todos os casos de perda, a pontuação é recalculada e gravada quando o
+jogador entrar de novo no servidor oficial. O plugin não promete recuperar o
+que não ficou guardado em nenhum lugar.
+
+No encerramento, o plugin espera no máximo `shutdown-timeout-seconds` e informa
+no console quantas atualizações não foram confirmadas e quantas foram salvas em
+disco.
+
+### Diagnóstico
+
+`/gs diag` mostra: gravações na fila, aguardando reenvio, recusadas por fila
+cheia, retiradas da fila, reenviadas, perdidas, e os salvamentos, recuperações
+e erros do arquivo de pendências.
 
 ## Compatibilidade
 
-* Testado em MariaDB 10.4.32. Colunas geradas indexadas exigem MariaDB 10.2.3+
-  ou MySQL 5.7+.
+* Testado em MariaDB 10.4.32 (suíte completa na versão 3.0.1). Colunas geradas
+  indexadas exigem MariaDB 10.2.3+ ou MySQL 5.7+.
 * MySQL e versões mais novas do MariaDB não foram testados.
 * O método de autenticação PARSEC (MariaDB 11.6+) não é suportado pelo driver
   embutido. Os testes usaram `mysql_native_password`; outros métodos não foram testados.

@@ -8,7 +8,7 @@ foi efetivamente medido.
 > | Ambiente | Situação |
 > |---|---|
 > | Servidor Paper real, com jogadores reais ou bots | **não executado** |
-> | MariaDB real | **executado na versão 1.1.0**: MariaDB 10.4.32 local, toda a suíte de persistência, planos e tempos das consultas, e o driver embutido no JAR. A camada de banco não mudou desde então e esses testes **não foram repetidos**; a suíte de persistência da 3.0.0 rodou em H2 |
+> | MariaDB real | **executado na versão 3.0.1**: MariaDB 10.4.32 local, a suíte completa (133 testes, incluindo a recuperação de gravações), planos e tempos das consultas, e o driver embutido no JAR |
 > | TAB do proxy via TAB-Bridge | **não executado** (sem acesso à rede) |
 > | Simulação em JVM, sem Paper | **executado**: fila de avaliações, cálculo, cache, atualização dos servidores de consulta |
 >
@@ -91,6 +91,20 @@ a frequência das consultas.
 * Consultas de offline com cache temporário, inclusive de "não encontrado".
 * Recarregar as regras reavalia só os jogadores online, respeitando o limite
   por tick. Jogadores offline não são varridos.
+
+## Custos da versão 3.0.1
+
+A correção da recuperação de gravações acrescenta:
+
+| Item | Custo |
+|---|---|
+| Acompanhamento de cada resultado (sequência, confirmado, retirado) | três campos por jogador online; nenhuma estrutura nova por gravação |
+| Tarefa de reenvio | a mesma tarefa de 1 s das atualizações; em servidor oficial ela só existe enquanto há gravação na fila ou resultado devendo, e reenvia no máximo 50 por execução, a partir da memória |
+| Confirmação | um aviso por linha gravada, na thread de gravação |
+| Gravação condicional no banco | a comparação de `updated_at` dentro do mesmo `INSERT ... ON DUPLICATE KEY UPDATE`; nenhuma consulta a mais |
+| Arquivo de pendências | escrito na thread de gravação: no máximo a cada 30 s durante uma queda do banco e uma vez no encerramento; nunca em operação normal |
+
+Nada disso acessa banco ou disco na thread principal, nem lê inventários.
 
 ## Custos da versão 3.0.0
 
@@ -252,7 +266,7 @@ ordem de 2 ms de banco a cada 30 s.
 | `/gs ver` de offline | 1 `SELECT` por nome a cada `offline-cache-seconds` |
 | Posições | no máximo 1 leitura agrupada por servidor a cada `position-refresh-seconds`, só com o placeholder em uso |
 
-Verificado nos testes automatizados (H2; na 1.1.0, também MariaDB 10.4.32):
+Verificado nos testes automatizados (H2 e MariaDB 10.4.32):
 
 * 50 alterações do mesmo jogador resultaram em 1 linha e 1 lote; 250 jogadores,
   em 3 lotes; 20 aberturas seguidas do ranking executaram 1 consulta;
@@ -299,8 +313,8 @@ conexões:
 
 A thread principal nunca espera o banco: ela apenas coloca o registro na fila.
 
-Verificado nos testes automatizados (H2; na 1.1.0, também MariaDB 10.4.32;
-a queda é simulada na obtenção da conexão):
+Verificado nos testes automatizados (H2 e MariaDB 10.4.32; a queda é simulada
+na obtenção da conexão):
 
 * durante a queda, as atualizações ficam pendentes e uma mais nova substitui a
   anterior do mesmo jogador;
@@ -314,6 +328,13 @@ a queda é simulada na obtenção da conexão):
 * em servidor de consulta, uma leitura que falha na entrada é refeita e o
   jogador recebe a pontuação depois que o banco volta; enquanto o banco está
   na janela de espera, nenhuma leitura é enviada;
+* com a fila cheia, o resultado recusado de um jogador que não muda o
+  equipamento é reenviado e gravado quando há lugar;
+* um jogador que saiu com a gravação recusada ou pendente é gravado depois;
+* uma confirmação antiga não marca um resultado mais novo como gravado;
+* um registro mais antigo nunca substitui uma linha mais nova no banco;
+* pendências sobrevivem a um encerramento e são gravadas na inicialização
+  seguinte;
 * o desligamento com o banco fora respeita o prazo.
 
 ## Como medir no servidor

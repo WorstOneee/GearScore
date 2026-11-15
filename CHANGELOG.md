@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.0.1
+
+### Fixed
+
+* **Lost writes when the queue was full.** The engine treated a result as
+  persisted as soon as it was handed to the write queue. If the queue then
+  dropped it, a player whose equipment did not change was never written again,
+  leaving the database, the ranking and the query servers stale.
+
+  A result is now tracked as calculated, queued or confirmed, and only counts
+  as persisted after its transaction commits. A full queue refuses results of
+  online players instead of dropping them, the engine is told about every
+  entry that is given up, and owed results are submitted again from memory by
+  a bounded once-a-second step, with no inventory read and no new event
+  needed. Sequence numbers keep an old confirmation, or one from an earlier
+  session, from settling a newer result.
+* Players who leave with a refused or pending result are still written.
+* The upsert ignores a result older than the stored row, so a late retry or a
+  restored batch can never undo a newer write.
+
+### Added
+
+* Unconfirmed writes are saved to `pending-writes.dat` while the database is
+  down and at shutdown, and are written on the next start.
+* `/gs diag` shows refused, dropped, recovered and lost writes and the state of
+  the pending file.
+
+Scoring, balance, public messages, the TAB integration, configuration files
+and the database schema are unchanged.
+
 ## 3.0.0
 
 ### Changed
