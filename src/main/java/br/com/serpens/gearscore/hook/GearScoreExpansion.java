@@ -2,35 +2,61 @@ package br.com.serpens.gearscore.hook;
 
 import br.com.serpens.gearscore.GearScorePlugin;
 import br.com.serpens.gearscore.model.CachedScore;
-import br.com.serpens.gearscore.model.PlayerRecord;
 import br.com.serpens.gearscore.storage.LookupService;
 import me.clip.placeholderapi.expansion.PlaceholderExpansion;
 import org.bukkit.OfflinePlayer;
 
-import java.util.Locale;
+import java.util.UUID;
 
 /**
- * PlaceholderAPI expansion. Every placeholder, the ranking position included, is answered
- * from memory: no SQL, no task, no inventory access, no recalculation, no waiting. The caches
- * behind them are refreshed on the plugin's own schedule, so how often TAB, holograms or
- * scoreboards ask has no effect on the database.
+ * PlaceholderAPI expansion. With TAB on the proxy, TAB-Bridge on this server resolves these
+ * through PlaceholderAPI and forwards the values, so the same placeholders work in the
+ * proxy's sidebar. All of them only read memory; see {@link PlaceholderResolver}.
  *
  * <pre>
- * %gearscore_total%         total score
- * %gearscore_armor%         armor score
- * %gearscore_weapon%        weapon score
+ * %gearscore_score%         total score (also %gearscore_total%)
  * %gearscore_tier%          tier name, plain text
  * %gearscore_tier_colored%  tier name with legacy colour codes
  * %gearscore_tier_id%       tier id from config.yml
+ * %gearscore_armor%         armor part of the score
+ * %gearscore_weapon%        weapon part of the score
  * %gearscore_position%      ranking position
  * </pre>
  */
 public final class GearScoreExpansion extends PlaceholderExpansion {
 
     private final GearScorePlugin plugin;
+    private final PlaceholderResolver resolver;
 
     public GearScoreExpansion(GearScorePlugin plugin) {
         this.plugin = plugin;
+        this.resolver = new PlaceholderResolver(new PlaceholderResolver.Source() {
+            @Override
+            public CachedScore cached(UUID id) {
+                return plugin.cached(id);
+            }
+
+            @Override
+            public String tierPlain(String tierId) {
+                return plugin.tierView(tierId).plain();
+            }
+
+            @Override
+            public String tierColored(String tierId) {
+                return plugin.tierView(tierId).legacy();
+            }
+
+            @Override
+            public int position(UUID id) {
+                LookupService lookups = plugin.lookups();
+                return lookups == null ? -1 : lookups.position(id);
+            }
+
+            @Override
+            public String fallback() {
+                return plugin.settings().fallback();
+            }
+        });
     }
 
     @Override
@@ -55,45 +81,6 @@ public final class GearScoreExpansion extends PlaceholderExpansion {
 
     @Override
     public String onRequest(OfflinePlayer player, String params) {
-        String fallback = plugin.settings().fallback();
-        if (player == null) {
-            return fallback;
-        }
-        CachedScore cached = plugin.cached(player.getUniqueId());
-        if (cached == null) {
-            return fallback;
-        }
-        PlayerRecord record = cached.record();
-        switch (params.toLowerCase(Locale.ROOT)) {
-            case "total", "score" -> {
-                return Integer.toString(record.score());
-            }
-            case "armor" -> {
-                return Integer.toString(record.armorScore());
-            }
-            case "weapon" -> {
-                return Integer.toString(record.weaponScore());
-            }
-            case "tier" -> {
-                return plugin.tierView(record.tier()).plain();
-            }
-            case "tier_colored" -> {
-                return plugin.tierView(record.tier()).legacy();
-            }
-            case "tier_id" -> {
-                return record.tier();
-            }
-            case "position", "rank" -> {
-                LookupService lookups = plugin.lookups();
-                if (lookups == null) {
-                    return fallback;
-                }
-                int position = lookups.position(record.uuid());
-                return position > 0 ? Integer.toString(position) : fallback;
-            }
-            default -> {
-                return null;
-            }
-        }
+        return resolver.resolve(player == null ? null : player.getUniqueId(), params);
     }
 }
