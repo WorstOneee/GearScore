@@ -476,7 +476,8 @@ public final class GearScorePlugin extends JavaPlugin {
         }
         // On an official source the task only lives while a write is unconfirmed or owed.
         return remote != null || positionsEnabled
-                || (writes != null && engine != null && (engine.hasOwed() || writes.pendingCount() > 0));
+                || (writes != null && engine != null
+                && (engine.hasOwed() || writes.pendingCount() > 0 || writes.backlogCount() > 0));
     }
 
     private void maintain() {

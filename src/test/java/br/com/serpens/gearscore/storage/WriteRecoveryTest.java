@@ -509,6 +509,157 @@ class WriteRecoveryTest {
         await(() -> !Files.exists(spoolFile()));
     }
 
+    private static PlayerRecord saved(UUID id, String name, int score, long updatedAt) {
+        return new PlayerRecord(id, name, score, score, 0, "elite", "newera", 3, updatedAt);
+    }
+
+    private WriteQueue restart(Metrics counters, int maxPending, int batchSize) {
+        WriteQueue next = new WriteQueue(source.open(counters, 60L, 60L), repository, counters, LOGGER,
+                30L, batchSize, maxPending, new PendingSpool(spoolFile()), 0L);
+        queues.add(next);
+        return next;
+    }
+
+    @Test
+    void aSpoolRecordThatFindsTheQueueFullWaitsInsteadOfBeingLost() throws Exception {
+        // The reported case: an old pending record in the file, and new updates filling the
+        // queue before the file is restored.
+        UUID old = UUID.randomUUID();
+        UUID fresh = UUID.randomUUID();
+        new PendingSpool(spoolFile()).save(List.of(saved(old, "Old", 700, 100L)));
+        source.open(new Metrics(), 1L, 1L).run(connection -> 1);
+
+        source.down = true;
+        Metrics counters = new Metrics();
+        WriteQueue next = restart(counters, 1, 1);
+        assertTrue(next.submit(saved(fresh, "Fresh", 900, 200L), 0L, false));
+        next.recoverSpool();
+
+        // No room: the record waits, and it is still in the file after the file is rewritten.
+        await(() -> next.backlogCount() == 1);
+        assertEquals(1, next.pendingCount());
+        await(() -> counters.spoolSaves.sum() >= 1);
+        List<UUID> onDisk = new PendingSpool(spoolFile()).load(100).stream().map(PlayerRecord::uuid).toList();
+        assertTrue(onDisk.contains(old), "the unprocessed record must stay in the file");
+        assertTrue(onDisk.contains(fresh));
+        assertNull(row(old));
+
+        // The database returns: the new update is written, then the old one gets its turn.
+        source.down = false;
+        await(() -> row(fresh) != null && row(old) != null);
+        assertEquals(900, row(fresh).score());
+        assertEquals(700, row(old).score());
+        assertEquals(0, counters.writesLost.sum());
+        assertEquals(0, counters.writesDropped.sum());
+        assertEquals(1, counters.spoolRecovered.sum());
+        await(() -> next.backlogCount() == 0 && next.pendingCount() == 0 && !Files.exists(spoolFile()));
+    }
+
+    @Test
+    void recordsStillWaitingSurviveAnotherRestart() throws Exception {
+        UUID old = UUID.randomUUID();
+        UUID fresh = UUID.randomUUID();
+        new PendingSpool(spoolFile()).save(List.of(saved(old, "Old", 700, 100L)));
+        source.open(new Metrics(), 1L, 1L).run(connection -> 1);
+
+        source.down = true;
+        Metrics first = new Metrics();
+        WriteQueue one = restart(first, 1, 1);
+        one.submit(saved(fresh, "Fresh", 900, 200L), 0L, false);
+        one.recoverSpool();
+        await(() -> one.backlogCount() == 1);
+
+        // The server stops again with the old record still waiting for room.
+        WriteQueue.ShutdownResult result = one.shutdown(1_000L);
+        assertEquals(2, result.unconfirmed());
+        assertEquals(2, result.savedToDisk());
+        assertEquals(2, new PendingSpool(spoolFile()).load(100).size());
+
+        source.down = false;
+        Metrics second = new Metrics();
+        WriteQueue two = restart(second, 1, 1);
+        two.recoverSpool();
+        await(() -> row(fresh) != null && row(old) != null);
+        assertEquals(0, second.writesLost.sum());
+        await(() -> !Files.exists(spoolFile()));
+    }
+
+    @Test
+    void aLargeSpoolIsFedInGraduallyWithinTheQueueLimit() throws Exception {
+        List<PlayerRecord> records = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            records.add(saved(new UUID(8L, i), "P" + i, 500 + i, 100L + i));
+        }
+        new PendingSpool(spoolFile()).save(records);
+        source.open(new Metrics(), 1L, 1L).run(connection -> 1);
+
+        source.down = true;
+        Metrics counters = new Metrics();
+        WriteQueue next = restart(counters, 5, 2);
+        next.recoverSpool();
+        await(() -> next.pendingCount() == 5 && next.backlogCount() == 5);
+
+        // New updates arriving meanwhile do not push the waiting records out.
+        UUID live = UUID.randomUUID();
+        assertFalse(next.submit(saved(live, "Live", 999, 900L), 7L, true), "full: an online result is refused");
+        assertEquals(5, next.backlogCount());
+
+        source.down = false;
+        await(() -> records.stream().allMatch(record -> row(record.uuid()) != null));
+        for (PlayerRecord record : records) {
+            assertEquals(record.score(), row(record.uuid()).score());
+        }
+        assertEquals(0, counters.writesLost.sum());
+        assertEquals(10, counters.spoolRecovered.sum());
+        await(() -> !Files.exists(spoolFile()));
+    }
+
+    @Test
+    void whatExceedsQueueAndBacklogIsCountedAsLost() throws Exception {
+        List<PlayerRecord> records = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            records.add(saved(new UUID(9L, i), "P" + i, 500 + i, 100L + i));
+        }
+        new PendingSpool(spoolFile()).save(records);
+        source.open(new Metrics(), 1L, 1L).run(connection -> 1);
+
+        // Room for 3 in the queue and 3 waiting: capacity 6, the file brings 9.
+        source.down = true;
+        Metrics counters = new Metrics();
+        WriteQueue next = restart(counters, 3, 3);
+        next.recoverSpool();
+        await(() -> next.pendingCount() == 3 && next.backlogCount() == 3);
+        assertEquals(3, counters.writesLost.sum(), "the excess is reported, not hidden");
+
+        source.down = false;
+        await(() -> counters.rowsWritten.sum() == 6);
+        // The three oldest of the excess are the ones given up.
+        long written = records.stream().filter(record -> row(record.uuid()) != null).count();
+        assertEquals(6, written);
+    }
+
+    @Test
+    void aSpoolRecordSupersededByANewerPendingResultIsDropped() throws Exception {
+        UUID id = UUID.randomUUID();
+        new PendingSpool(spoolFile()).save(List.of(saved(id, "Zwo", 700, 100L)));
+        source.open(new Metrics(), 1L, 1L).run(connection -> 1);
+
+        source.down = true;
+        Metrics counters = new Metrics();
+        WriteQueue next = restart(counters, 5, 5);
+        // The player already produced a newer result in this run.
+        next.submit(saved(id, "Zwo", 1200, 500L), 3L, true);
+        next.recoverSpool();
+        Thread.sleep(150L);
+        assertEquals(1, next.pendingCount());
+        assertEquals(0, next.backlogCount());
+
+        source.down = false;
+        await(() -> row(id) != null);
+        assertEquals(1200, row(id).score());
+        assertEquals(0, counters.writesLost.sum());
+    }
+
     @Test
     void aDamagedSpoolFileIsIgnoredSafely() throws Exception {
         Files.writeString(spoolFile(), "GEARSCORE-PENDING\t1\nnot-a-uuid\tx\t1\t1\t1\tt\ts\t1\t1\nshort line\n"

@@ -324,7 +324,8 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
                         + "<gray>, reenviadas <white>" + m.writesRecovered.sum()
                         + "<gray>, perdidas <white>" + m.writesLost.sum());
                 line(sender, " <gray>Arquivo de pendências: salvo <white>" + m.spoolSaves.sum()
-                        + "<gray> vez(es), recuperadas <white>" + m.spoolRecovered.sum()
+                        + "<gray> vez(es), aguardando lugar <white>" + writes.backlogCount()
+                        + "<gray>, recuperadas <white>" + m.spoolRecovered.sum()
                         + "<gray>, erros <white>" + m.spoolErrors.sum());
                 line(sender, " <gray>Lotes enviados: <white>" + m.writeBatches.sum()
                         + "<gray>, linhas gravadas: <white>" + m.rowsWritten.sum());

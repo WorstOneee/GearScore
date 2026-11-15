@@ -38,7 +38,8 @@ import java.util.logging.Logger;
  *     counted and logged, and the player is evaluated again on their next join.</li>
  * </ul>
  * Unconfirmed entries are also kept in a small file while the database is down and at
- * shutdown, so they survive a restart.
+ * shutdown, so they survive a restart. On the next start they are fed back into the queue
+ * as room appears and stay in the file until then.
  */
 public final class WriteQueue {
 
@@ -69,6 +70,12 @@ public final class WriteQueue {
     // Writer thread only.
     private long lastSpoolAt;
     private boolean spoolWritten;
+    /**
+     * Records read from the spool file that have not found room in the queue yet. They stay
+     * here, and in the file, until they are admitted; never more than {@code maxPending}.
+     */
+    private final LinkedHashMap<UUID, PlayerRecord> backlog = new LinkedHashMap<>();
+    private volatile int backlogSize;
 
     public WriteQueue(Database database, ScoreRepository repository, Metrics metrics, Logger logger,
                       long flushIntervalMillis, int batchSize, int maxPending) {
@@ -216,6 +223,10 @@ public final class WriteQueue {
             return;
         }
         boolean ok = flushBatch();
+        if (ok) {
+            // Room was just freed: let waiting spool records in before anything else.
+            admitBacklog();
+        }
         if (pendingCount() > 0) {
             if (!ok) {
                 spoolIfDue();
@@ -291,14 +302,59 @@ public final class WriteQueue {
 
     // ---- disk spool (writer thread only) -------------------------------------------------
 
-    private List<PlayerRecord> pendingRecords() {
+    /** Everything still unconfirmed: spool records waiting for room, then the queue itself. */
+    private List<PlayerRecord> unconfirmedRecords() {
         synchronized (lock) {
-            List<PlayerRecord> records = new ArrayList<>(pending.size());
+            List<PlayerRecord> records = new ArrayList<>(backlog.size() + pending.size());
+            for (PlayerRecord record : backlog.values()) {
+                if (!pending.containsKey(record.uuid())) {
+                    records.add(record);
+                }
+            }
             for (Entry entry : pending.values()) {
                 records.add(entry.record());
             }
             return records;
         }
+    }
+
+    /**
+     * Moves spool records into the queue while it has room, oldest first. A record whose
+     * player already has a pending entry is superseded by it.
+     *
+     * @return number of records admitted
+     */
+    private int admitBacklog() {
+        if (backlog.isEmpty()) {
+            return 0;
+        }
+        int admitted = 0;
+        synchronized (lock) {
+            Iterator<PlayerRecord> iterator = backlog.values().iterator();
+            while (iterator.hasNext()) {
+                PlayerRecord record = iterator.next();
+                if (pending.containsKey(record.uuid())) {
+                    iterator.remove();
+                    continue;
+                }
+                if (pending.size() >= maxPending) {
+                    break;
+                }
+                pending.put(record.uuid(), new Entry(record, 0L));
+                iterator.remove();
+                admitted++;
+            }
+        }
+        backlogSize = backlog.size();
+        if (admitted > 0) {
+            metrics.spoolRecovered.add(admitted);
+        }
+        return admitted;
+    }
+
+    /** Spool records still waiting for room in the queue. */
+    public int backlogCount() {
+        return backlogSize;
     }
 
     private void spoolIfDue() {
@@ -316,7 +372,7 @@ public final class WriteQueue {
         if (spool == null) {
             return -1;
         }
-        List<PlayerRecord> records = pendingRecords();
+        List<PlayerRecord> records = unconfirmedRecords();
         try {
             if (records.isEmpty()) {
                 spool.delete();
@@ -335,7 +391,7 @@ public final class WriteQueue {
     }
 
     private void clearSpool() {
-        if (spool == null || !spoolWritten) {
+        if (spool == null || !spoolWritten || !backlog.isEmpty()) {
             return;
         }
         try {
@@ -347,8 +403,10 @@ public final class WriteQueue {
     }
 
     /**
-     * Loads, on the writer thread, what a previous run left unconfirmed. A loaded record
-     * never replaces a pending one and is skipped when the queue is full.
+     * Loads, on the writer thread, what a previous run left unconfirmed. Records enter the
+     * queue as room appears; until then they wait in the backlog and remain in the file, so
+     * a full queue or another restart does not lose them. A loaded record never replaces a
+     * pending one.
      */
     public void recoverSpool() {
         if (spool == null || closed) {
@@ -358,29 +416,50 @@ public final class WriteQueue {
             executor.execute(() -> {
                 List<PlayerRecord> records;
                 try {
-                    records = spool.load(maxPending);
+                    // Read whole: the file was written by this queue, so it holds at most the
+                    // queue plus the backlog of the previous run, and anything beyond what
+                    // fits must be counted below rather than left unread.
+                    records = spool.load(Integer.MAX_VALUE);
                 } catch (IOException e) {
                     metrics.spoolErrors.increment();
                     return;
                 }
-                int loaded = 0;
-                synchronized (lock) {
-                    for (PlayerRecord record : records) {
-                        if (pending.size() >= maxPending) {
-                            break;
+                if (records.isEmpty()) {
+                    clearSpool();
+                    return;
+                }
+                int overflow = 0;
+                for (PlayerRecord record : records) {
+                    PlayerRecord known = backlog.get(record.uuid());
+                    if (known != null) {
+                        if (record.updatedAt() > known.updatedAt()) {
+                            backlog.put(record.uuid(), record);
                         }
-                        if (pending.putIfAbsent(record.uuid(), new Entry(record, 0L)) == null) {
-                            loaded++;
-                        }
+                    } else {
+                        backlog.put(record.uuid(), record);
                     }
                 }
-                if (loaded > 0) {
-                    metrics.spoolRecovered.add(loaded);
-                    logger.info("Recovered " + loaded + " pending score update(s) left by the previous run.");
-                    schedule(0L);
-                } else if (records.isEmpty()) {
-                    clearSpool();
+                int found = backlog.size();
+                admitBacklog();
+                // Capacity policy: what neither the queue nor the backlog can hold is given up,
+                // newest kept, and reported instead of vanishing.
+                Iterator<PlayerRecord> oldest = backlog.values().iterator();
+                while (backlog.size() > maxPending && oldest.hasNext()) {
+                    oldest.next();
+                    oldest.remove();
+                    overflow++;
                 }
+                if (overflow > 0) {
+                    metrics.writesLost.add(overflow);
+                }
+                backlogSize = backlog.size();
+                logger.info("Found " + found + " pending score update(s) left by the previous run"
+                        + (backlogSize > 0 ? "; " + backlogSize + " waiting for room in the write queue." : "."));
+                if (overflow > 0) {
+                    logger.warning(overflow + " pending score update(s) from the previous run exceeded the "
+                            + "limit and were discarded. Those players are evaluated again on their next join.");
+                }
+                schedule(0L);
             });
         } catch (RuntimeException ignored) {
             // executor already stopped
@@ -405,10 +484,12 @@ public final class WriteQueue {
         try {
             Future<?> lastFlush = executor.submit(() -> {
                 saved[0] = Math.max(0, saveSpool());
+                admitBacklog();
                 while (pendingCount() > 0 && System.currentTimeMillis() < deadline && database.isAvailable()) {
                     if (!flushBatch()) {
                         break;
                     }
+                    admitBacklog();
                 }
                 // Keep on disk exactly what is still unconfirmed.
                 saved[0] = Math.max(0, saveSpool());
@@ -420,7 +501,7 @@ public final class WriteQueue {
             // whatever is still pending is reported by the caller
         }
         executor.shutdownNow();
-        int unconfirmed = pendingCount();
+        int unconfirmed = pendingCount() + backlogSize;
         return new ShutdownResult(unconfirmed, unconfirmed == 0 ? 0 : saved[0]);
     }
 }
