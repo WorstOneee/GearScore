@@ -50,22 +50,16 @@ class EngineBenchmark {
 
     private final RuleSet rules = TestRules.defaults();
     // Inventories are prepared up front so the timed section only contains plugin work.
-    private final GearSnapshot[] setA = new GearSnapshot[9];
+    private final GearSnapshot setA = buildSetA();
     private final GearSnapshot setB = buildSetB();
-    private final GearSnapshot setC = gear(armorSet(rules, "iron", "protection", 2), item(rules, "iron_axe", 4));
-
-    EngineBenchmark() {
-        for (int slot = 0; slot < 9; slot++) {
-            setA[slot] = buildSetA(slot);
-        }
-    }
+    private final GearSnapshot setC = gear(armorSet(rules, "iron", "protection", 2), item(rules, "iron_axe"));
 
     private enum Scenario {
         /** Durability-only events at 4/s per player, plus 5% of players swapping weapon each second. */
         COMBAT,
         /** Every player switches to a random one of three full sets every 2 ticks. */
         RAPID_SWAP,
-        /** 10 inventory events/s per player; 20% move the weapon to another hotbar slot. */
+        /** 10 inventory events/s per player; 20% move gear to other slots, composition unchanged. */
         ITEM_MOVEMENT
     }
 
@@ -74,6 +68,7 @@ class EngineBenchmark {
         final Metrics metrics = new Metrics();
         final List<UUID> players = new ArrayList<>();
         final Map<UUID, GearSnapshot> inventories = new HashMap<>();
+        final Map<UUID, Integer> layout = new HashMap<>();
         final Map<UUID, PlayerRecord> pendingWrites = new HashMap<>();
         final Random random = new Random(42);
         long changes;
@@ -82,7 +77,8 @@ class EngineBenchmark {
         long tick;
 
         Simulation(int count, ScoreEngine.Sink extraSink) {
-            this.engine = new ScoreEngine(rules, "newera", id -> fresh(inventories.get(id)), record -> {
+            this.engine = new ScoreEngine(rules, "newera",
+                    id -> fresh(inventories.get(id), layout.getOrDefault(id, 0)), record -> {
                 changes++;
                 pendingWrites.put(record.uuid(), record);
                 if (extraSink != null) {
@@ -93,7 +89,7 @@ class EngineBenchmark {
                 UUID id = new UUID(7L, i);
                 players.add(id);
                 engine.track(id, "Player" + i);
-                inventories.put(id, setA[0]);
+                inventories.put(id, setA);
             }
         }
 
@@ -109,7 +105,7 @@ class EngineBenchmark {
                     if (tick % 20 == 0) {
                         for (UUID id : players) {
                             if (random.nextInt(20) == 0) {
-                                inventories.put(id, random.nextBoolean() ? setA[0] : setB);
+                                inventories.put(id, random.nextBoolean() ? setA : setB);
                                 engine.request(id, tick, DEBOUNCE);
                             }
                         }
@@ -119,7 +115,7 @@ class EngineBenchmark {
                     if (tick % 2 == 0) {
                         for (UUID id : players) {
                             int pick = random.nextInt(3);
-                            inventories.put(id, pick == 0 ? setA[0] : pick == 1 ? setB : setC);
+                            inventories.put(id, pick == 0 ? setA : pick == 1 ? setB : setC);
                             engine.request(id, tick, DEBOUNCE);
                         }
                     }
@@ -128,7 +124,7 @@ class EngineBenchmark {
                     if (tick % 2 == 0) {
                         for (UUID id : players) {
                             if (random.nextInt(5) == 0) {
-                                inventories.put(id, setA[random.nextInt(9)]);
+                                layout.put(id, random.nextInt(41));
                             }
                             engine.request(id, tick, DEBOUNCE);
                         }
@@ -145,41 +141,45 @@ class EngineBenchmark {
         }
     }
 
-    private GearSnapshot buildSetA(int weaponSlot) {
+    /** A full PvP inventory: worn armor, six weapons and a spare armor set, 14 scored items. */
+    private GearSnapshot buildSetA() {
         ItemSnapshot[] armor = armorSet(rules, "netherite", "protection", 4, "unbreaking", 3, "mending", 1);
-        armor[3] = item(rules, "netherite_boots", 36, "protection", 4, "unbreaking", 3, "mending", 1,
+        armor[3] = item(rules, "netherite_boots", "protection", 4, "unbreaking", 3, "mending", 1,
                 "feather_falling", 4, "depth_strider", 3, "soul_speed", 3);
+        ItemSnapshot[] spare = armorSet(rules, "netherite", "protection", 4, "unbreaking", 3);
         return gear(armor,
-                item(rules, "netherite_sword", weaponSlot, "sharpness", 5, "fire_aspect", 2, "knockback", 2,
+                item(rules, "netherite_sword", "sharpness", 5, "fire_aspect", 2, "knockback", 2,
                         "sweeping_edge", 3, "looting", 3, "unbreaking", 3, "mending", 1),
-                item(rules, "netherite_axe", (weaponSlot + 1) % 9, "sharpness", 5, "unbreaking", 3),
-                item(rules, "bow", (weaponSlot + 2) % 9, "power", 5, "flame", 1),
-                item(rules, "mace", 40, "density", 5, "wind_burst", 3));
+                item(rules, "netherite_axe", "sharpness", 5, "unbreaking", 3),
+                item(rules, "bow", "power", 5, "flame", 1, "punch", 2),
+                item(rules, "crossbow", "quick_charge", 3, "piercing", 4),
+                item(rules, "mace", "density", 5, "wind_burst", 3),
+                item(rules, "trident", "loyalty", 3, "impaling", 5),
+                spare[0], spare[1], spare[2], spare[3]);
     }
 
     private GearSnapshot buildSetB() {
         return gear(armorSet(rules, "diamond", "protection", 3, "unbreaking", 3),
-                item(rules, "diamond_sword", 0, "sharpness", 4, "unbreaking", 3),
-                item(rules, "crossbow", 1, "quick_charge", 3, "piercing", 4));
+                item(rules, "diamond_sword", "sharpness", 4, "unbreaking", 3),
+                item(rules, "crossbow", "quick_charge", 3, "piercing", 4),
+                item(rules, "bow", "power", 4));
     }
 
-    /** New objects on every capture, as a real inventory read would produce. */
-    private static GearSnapshot fresh(GearSnapshot template) {
-        ItemSnapshot[] armor = new ItemSnapshot[4];
-        for (int i = 0; i < 4; i++) {
-            armor[i] = copy(template.armor(i));
+    /**
+     * New objects on every capture, as a real inventory read would produce. Items are handed
+     * over starting at a different slot each time the layout changes, so the snapshot has to
+     * put them back into its canonical order.
+     */
+    private static GearSnapshot fresh(GearSnapshot template, int firstSlot) {
+        int size = template.size();
+        ItemSnapshot[] items = new ItemSnapshot[size];
+        for (int i = 0; i < size; i++) {
+            items[i] = copy(template.item((i + firstSlot) % size));
         }
-        ItemSnapshot[] weapons = new ItemSnapshot[template.weaponCount()];
-        for (int i = 0; i < weapons.length; i++) {
-            weapons[i] = copy(template.weapon(i));
-        }
-        return new GearSnapshot(armor, weapons);
+        return new GearSnapshot(items, size);
     }
 
     private static ItemSnapshot copy(ItemSnapshot item) {
-        if (item == null) {
-            return null;
-        }
         int count = item.enchantCount();
         String[] keys = new String[count];
         int[] levels = new int[count];
@@ -187,7 +187,7 @@ class EngineBenchmark {
             keys[i] = item.enchantKey(i);
             levels[i] = item.enchantLevel(i);
         }
-        return new ItemSnapshot(item.def(), item.slot(), keys, levels, item.custom());
+        return new ItemSnapshot(item.def(), keys, levels, item.custom());
     }
 
     @Test
