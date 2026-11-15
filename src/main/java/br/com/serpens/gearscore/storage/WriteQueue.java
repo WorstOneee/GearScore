@@ -155,10 +155,22 @@ public final class WriteQueue {
         }
     }
 
+    /**
+     * Puts a failed batch back in front of what arrived meanwhile, never replacing a newer
+     * state of the same player, and re-applies the memory limit.
+     */
     private void restore(List<PlayerRecord> batch) {
         synchronized (lock) {
+            LinkedHashMap<UUID, PlayerRecord> newer = new LinkedHashMap<>(pending);
+            pending.clear();
             for (PlayerRecord record : batch) {
-                pending.putIfAbsent(record.uuid(), record);
+                if (!newer.containsKey(record.uuid())) {
+                    pending.put(record.uuid(), record);
+                }
+            }
+            pending.putAll(newer);
+            while (pending.size() > maxPending) {
+                dropOldest();
             }
         }
     }
