@@ -2,7 +2,7 @@ package br.com.serpens.gearscore.score;
 
 /**
  * Outcome of one evaluation, including the per-item breakdown shown by the details command.
- * total = armorBase + armorEnchant + weaponBase + weaponEnchant.
+ * total = armorBase + armorEnchant + weaponBase + weaponEnchant, summed over every valid item.
  */
 public final class ScoreResult {
 
@@ -32,19 +32,24 @@ public final class ScoreResult {
     private final int armorEnchant;
     private final int weaponBase;
     private final int weaponEnchant;
-    private final ItemScore[] armor;
-    private final ItemScore weapon;
+    private final int armorCount;
+    private final int weaponCount;
+    private final ItemScore[] items;
     private final Tier tier;
     private final int rulesVersion;
 
+    /**
+     * @param items every scored item, highest score first
+     */
     public ScoreResult(int armorBase, int armorEnchant, int weaponBase, int weaponEnchant,
-                       ItemScore[] armor, ItemScore weapon, RuleSet rules) {
+                       int armorCount, int weaponCount, ItemScore[] items, RuleSet rules) {
         this.armorBase = armorBase;
         this.armorEnchant = armorEnchant;
         this.weaponBase = weaponBase;
         this.weaponEnchant = weaponEnchant;
-        this.armor = armor;
-        this.weapon = weapon;
+        this.armorCount = armorCount;
+        this.weaponCount = weaponCount;
+        this.items = items;
         this.tier = rules.tierFor(total());
         this.rulesVersion = rules.version();
     }
@@ -77,14 +82,22 @@ public final class ScoreResult {
         return weaponBase + weaponEnchant;
     }
 
-    /** Helmet, chestplate, leggings, boots; entries are null for empty slots. */
-    public ItemScore armor(int index) {
-        return armor[index];
+    /** Armor pieces counted, worn or carried. */
+    public int armorCount() {
+        return armorCount;
     }
 
-    /** The single weapon that was counted, or null. */
-    public ItemScore weapon() {
-        return weapon;
+    public int weaponCount() {
+        return weaponCount;
+    }
+
+    public int itemCount() {
+        return items.length;
+    }
+
+    /** Scored items, highest score first. */
+    public ItemScore item(int index) {
+        return items[index];
     }
 
     public Tier tier() {

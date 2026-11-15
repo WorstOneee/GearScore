@@ -3,40 +3,33 @@ package br.com.serpens.gearscore.score;
 import java.util.Arrays;
 
 /**
- * The equipment the formula looks at: four armor slots plus the weapon candidates
- * found in the hotbar and off hand. Doubles as the change-detection signature.
+ * Every valid piece of gear a player carries: the 36 inventory slots, the 4 armor slots and
+ * the off hand, one entry per occupied slot. Entries are kept in a canonical order, so two
+ * snapshots are equal exactly when they hold the same items, wherever those items sit.
+ * Doubles as the change-detection signature.
  */
 public final class GearSnapshot {
 
-    private static final ItemSnapshot[] NO_WEAPONS = new ItemSnapshot[0];
+    public static final GearSnapshot EMPTY = new GearSnapshot(new ItemSnapshot[0], 0);
 
-    private final ItemSnapshot[] armor;
-    private final ItemSnapshot[] weapons;
+    private final ItemSnapshot[] items;
     private final int hash;
 
-    /**
-     * @param armor   helmet, chestplate, leggings, boots; entries may be null
-     * @param weapons weapon candidates, no null entries
-     */
-    public GearSnapshot(ItemSnapshot[] armor, ItemSnapshot[] weapons) {
-        if (armor.length != 4) {
-            throw new IllegalArgumentException("armor must have 4 entries");
+    /** Takes the first {@code count} entries of {@code source}; the array is not kept. */
+    public GearSnapshot(ItemSnapshot[] source, int count) {
+        this.items = Arrays.copyOf(source, count);
+        if (count > 1) {
+            Arrays.sort(this.items);
         }
-        this.armor = armor;
-        this.weapons = weapons == null || weapons.length == 0 ? NO_WEAPONS : weapons;
-        this.hash = 31 * Arrays.hashCode(this.armor) + Arrays.hashCode(this.weapons);
+        this.hash = Arrays.hashCode(this.items);
     }
 
-    public ItemSnapshot armor(int index) {
-        return armor[index];
+    public int size() {
+        return items.length;
     }
 
-    public int weaponCount() {
-        return weapons.length;
-    }
-
-    public ItemSnapshot weapon(int index) {
-        return weapons[index];
+    public ItemSnapshot item(int index) {
+        return items[index];
     }
 
     @Override
@@ -47,7 +40,7 @@ public final class GearSnapshot {
         if (!(other instanceof GearSnapshot that)) {
             return false;
         }
-        return hash == that.hash && Arrays.equals(armor, that.armor) && Arrays.equals(weapons, that.weapons);
+        return hash == that.hash && Arrays.equals(items, that.items);
     }
 
     @Override

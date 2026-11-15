@@ -6,23 +6,31 @@
 #  na conta.
 #
 #  Fórmula:
-#    GearScore = base das armaduras
-#              + encantamentos das armaduras
-#              + base da melhor arma
-#              + encantamentos dessa arma
+#    GearScore = soma de TODOS os equipamentos válidos que o jogador carrega
+#    cada equipamento = base (material e tipo) + encantamentos
 #
-#  Somente os 4 slots de armadura, a hotbar e a mão secundária são lidos.
-#  Apenas UMA arma conta (a de maior pontuação), então carregar várias
-#  espadas iguais não aumenta o resultado.
+#  São lidos os 36 slots do inventário (hotbar incluída), os 4 slots de
+#  armadura e a mão secundária. Cada slot conta uma vez; itens iguais em
+#  slots diferentes são equipamentos distintos e somam individualmente.
+#  Armaduras guardadas no inventário também pontuam.
+#
+#  NÃO são lidos: Ender Chest, baús abertos, cursor, grade de criação e o
+#  conteúdo de shulkers ou outros recipientes.
+#  Só pontuam os materiais listados aqui (e itens personalizados por PDC).
+#  Blocos, comida, recursos e livros encantados nunca pontuam, mesmo com
+#  encantamentos ou brilho.
 #
 #  Depois de editar, use /gearscore reload.
 #  A conexão com o banco fica em database.yml.
 # ============================================================================
 
+# Versão deste arquivo, usada pela atualização automática. Não altere.
+file-version: 2
+
 # Versão das regras de cálculo. Aumente este número sempre que mudar pesos de
 # forma relevante: ele é gravado junto com cada pontuação, permitindo saber
 # com qual tabela um resultado foi calculado.
-rules-version: 1
+rules-version: 2
 
 # ----------------------------------------------------------------------------
 #  Servidor
@@ -72,11 +80,6 @@ evaluation:
   # Máximo de jogadores avaliados por tick. O excedente fica para os ticks
   # seguintes, espalhando picos (ex.: muitos jogadores trocando de kit).
   max-per-tick: 20
-
-  # Onde procurar a arma.
-  weapon-slots:
-    hotbar: true
-    offhand: true
 
   # Mundos onde o equipamento não é avaliado (a última pontuação é mantida).
   ignored-worlds: []
@@ -180,8 +183,14 @@ enchantments:
       - ["minecraft:riptide", "minecraft:channeling"]
       - ["minecraft:silk_touch", "minecraft:fortune"]
 
-  # Regras por equipamento. A busca é feita nesta ordem, e a mais específica
-  # vence:
+  # Regras por equipamento. Um encantamento só pontua se houver regra para
+  # ele no tipo da peça em que está. Por isso cada encantamento fica no grupo
+  # das peças que realmente podem recebê-lo: Peso-Pena só existe em "boots",
+  # Respiração só em "helmet", Afiação não existe em "mace", e assim por
+  # diante. Um encantamento colocado à força em uma peça onde não se aplica
+  # vale zero.
+  #
+  # A busca é feita nesta ordem, e a mais específica vence:
   #   1. o tipo da peça: helmet, chestplate, leggings, boots, sword, axe,
   #      mace, trident, bow, crossbow, spear
   #   2. a família: armor (armaduras) ou weapon (armas)
@@ -200,12 +209,13 @@ enchantments:
   # datapacks e plugins) até serem configurados. O /gearscore diag lista as
   # chaves desconhecidas que foram encontradas.
   rules:
+    # Vale para qualquer equipamento: só o que todo equipamento aceita.
     any:
+      # Durabilidade não muda o resultado de uma luta: pesa pouco.
       "minecraft:unbreaking":      { category: utility, levels: [5, 10, 15] }
       "minecraft:mending":         { category: utility, levels: [12] }
       # Maldições: use valor negativo (penaliza), 0 (neutro) ou positivo.
       "minecraft:vanishing_curse": { category: curse, levels: [-10] }
-      "minecraft:binding_curse":   { category: curse, levels: [-10] }
 
     armor:
       # Defesa geral: vale em qualquer luta.
@@ -216,16 +226,25 @@ enchantments:
       "minecraft:blast_protection":      { category: conditional, levels: [15, 32, 52, 75] }
       "minecraft:projectile_protection": { category: conditional, levels: [15, 32, 52, 75] }
       "minecraft:fire_protection":       { category: conditional, levels: [12, 26, 42, 60] }
+      # Devolve dano a quem bate: útil, mas gasta a armadura e depende do
+      # adversário atacar corpo a corpo.
       "minecraft:thorns":                { category: conditional, levels: [15, 30, 45] }
-      # Mobilidade
+      "minecraft:binding_curse":         { category: curse, levels: [-10] }
+
+    helmet:
+      "minecraft:respiration":           { category: utility, levels: [4, 8, 12] }
+      "minecraft:aqua_affinity":         { category: utility, levels: [5] }
+
+    leggings:
+      "minecraft:swift_sneak":           { category: mobility, levels: [6, 12, 18] }
+
+    boots:
+      # Reduz dano de queda (pérolas, mace, knockback em altura): o mais
+      # relevante dos encantamentos de mobilidade.
       "minecraft:feather_falling":       { category: mobility, levels: [10, 20, 30, 40] }
       "minecraft:depth_strider":         { category: mobility, levels: [6, 12, 18] }
       "minecraft:frost_walker":          { category: mobility, levels: [4, 8] }
       "minecraft:soul_speed":            { category: mobility, levels: [5, 10, 15] }
-      "minecraft:swift_sneak":           { category: mobility, levels: [6, 12, 18] }
-      # Utilidade
-      "minecraft:respiration":           { category: utility, levels: [4, 8, 12] }
-      "minecraft:aqua_affinity":         { category: utility, levels: [5] }
 
     sword:
       "minecraft:sharpness":          { category: combat, levels: [25, 50, 80, 115, 155] }
@@ -235,13 +254,15 @@ enchantments:
       # Especializados em mobs: quase não ajudam contra jogadores.
       "minecraft:smite":              { category: mob, per-level: 6, max-level: 5 }
       "minecraft:bane_of_arthropods": { category: mob, per-level: 4, max-level: 5 }
-      "minecraft:looting":            { category: utility, per-level: 3, max-level: 3 }
+      # Coleta: não ajuda em combate.
+      "minecraft:looting":            { category: utility, per-level: 2, max-level: 3 }
 
     axe:
       "minecraft:sharpness":          { category: combat, levels: [25, 50, 80, 115, 155] }
       "minecraft:smite":              { category: mob, per-level: 6, max-level: 5 }
       "minecraft:bane_of_arthropods": { category: mob, per-level: 4, max-level: 5 }
-      "minecraft:efficiency":         { category: utility, per-level: 2, max-level: 5 }
+      # Coleta: quase não pesa.
+      "minecraft:efficiency":         { category: utility, per-level: 1, max-level: 5 }
       "minecraft:silk_touch":         { category: utility, levels: [0] }
       "minecraft:fortune":            { category: utility, per-level: 0, max-level: 3 }
 
@@ -264,7 +285,7 @@ enchantments:
       "minecraft:power":              { category: combat, levels: [20, 40, 65, 90, 120] }
       "minecraft:flame":              { category: combat, levels: [25] }
       "minecraft:punch":              { category: conditional, levels: [10, 20] }
-      "minecraft:infinity":           { category: utility, levels: [30] }
+      "minecraft:infinity":           { category: utility, levels: [15] }
 
     crossbow:
       "minecraft:quick_charge":       { category: combat, levels: [20, 40, 60] }
@@ -278,7 +299,7 @@ enchantments:
       "minecraft:knockback":          { category: conditional, levels: [12, 22] }
       "minecraft:smite":              { category: mob, per-level: 6, max-level: 5 }
       "minecraft:bane_of_arthropods": { category: mob, per-level: 4, max-level: 5 }
-      "minecraft:looting":            { category: utility, per-level: 3, max-level: 3 }
+      "minecraft:looting":            { category: utility, per-level: 2, max-level: 3 }
 
 # ----------------------------------------------------------------------------
 #  Itens personalizados (opcional)
@@ -304,14 +325,26 @@ custom-items:
 #  Faixas de classificação
 # ----------------------------------------------------------------------------
 # "min" é a pontuação mínima da faixa. "name" aceita MiniMessage.
+# Como a pontuação soma tudo o que o jogador carrega, a escala é maior que a
+# de um único conjunto. Referência com a tabela padrão: armadura de
+# netherita totalmente encantada vale cerca de 1050; cada arma principal
+# totalmente encantada, entre 250 e 370.
 tiers:
   - { id: iniciante, name: "<gray>Iniciante",          min: 0 }
-  - { id: aprendiz,  name: "<white>Aprendiz",          min: 150 }
-  - { id: guerreiro, name: "<green>Guerreiro",         min: 350 }
-  - { id: veterano,  name: "<aqua>Veterano",           min: 600 }
-  - { id: elite,     name: "<light_purple>Elite",      min: 900 }
-  - { id: lendario,  name: "<gold>Lendário",           min: 1200 }
-  - { id: mitico,    name: "<red><bold>Mítico",        min: 1400 }
+  - { id: aprendiz,  name: "<white>Aprendiz",          min: 300 }
+  - { id: guerreiro, name: "<green>Guerreiro",         min: 700 }
+  - { id: veterano,  name: "<aqua>Veterano",           min: 1200 }
+  - { id: elite,     name: "<light_purple>Elite",      min: 1800 }
+  - { id: lendario,  name: "<gold>Lendário",           min: 2400 }
+  - { id: mitico,    name: "<red><bold>Mítico",        min: 3000 }
+
+# ----------------------------------------------------------------------------
+#  Exibição
+# ----------------------------------------------------------------------------
+display:
+  # Quantos equipamentos o /gs detalhes lista (os de maior pontuação). O
+  # restante aparece somado em uma linha.
+  details-max-items: 12
 
 # ----------------------------------------------------------------------------
 #  Ranking
@@ -341,4 +374,4 @@ ranking:
 # ----------------------------------------------------------------------------
 placeholders:
   # Texto retornado enquanto o dado ainda não está disponível.
-  fallback: "-"
+  fallback: "—"

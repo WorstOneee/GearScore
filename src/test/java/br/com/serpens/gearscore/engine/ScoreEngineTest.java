@@ -51,7 +51,7 @@ class ScoreEngineTest {
     }
 
     private GearSnapshot netherite(String sword) {
-        return gear(armorSet(rules, "netherite", "protection", 4), item(rules, sword, 0, "sharpness", 5));
+        return gear(armorSet(rules, "netherite", "protection", 4), item(rules, sword, "sharpness", 5));
     }
 
     @Test
@@ -87,6 +87,35 @@ class ScoreEngineTest {
     }
 
     @Test
+    void movingItemsBetweenSlotsIsNotAChange() {
+        ItemSnapshot sword = item(rules, "netherite_sword", "sharpness", 5);
+        ItemSnapshot bow = item(rules, "bow", "power", 5);
+        ItemSnapshot helmet = item(rules, "netherite_helmet", "protection", 4);
+        inventories.put(player, TestRules.carrying(sword, bow, helmet));
+        engine.evaluateNow(player);
+        // Same gear, read in a different slot order (hotbar to storage, helmet taken off).
+        inventories.put(player, TestRules.carrying(
+                item(rules, "netherite_helmet", "protection", 4),
+                item(rules, "netherite_sword", "sharpness", 5),
+                item(rules, "bow", "power", 5)));
+        engine.evaluateNow(player);
+        assertEquals(1, metrics.evaluations.sum());
+        assertEquals(1, metrics.unchanged.sum());
+        assertEquals(1, written.size());
+    }
+
+    @Test
+    void addingASecondCopyOfAnItemIsAChange() {
+        inventories.put(player, TestRules.carrying(item(rules, "netherite_sword", "sharpness", 5)));
+        engine.evaluateNow(player);
+        inventories.put(player, TestRules.carrying(item(rules, "netherite_sword", "sharpness", 5),
+                item(rules, "netherite_sword", "sharpness", 5)));
+        engine.evaluateNow(player);
+        assertEquals(2, written.size());
+        assertEquals(2 * written.get(0).score(), written.get(1).score());
+    }
+
+    @Test
     void scoreFollowsSwapBreakAndRemoval() {
         inventories.put(player, netherite("netherite_sword"));
         engine.evaluateNow(player);
@@ -101,7 +130,7 @@ class ScoreEngineTest {
         // chestplate broke
         ItemSnapshot[] armor = armorSet(rules, "netherite", "protection", 4);
         armor[1] = null;
-        inventories.put(player, gear(armor, item(rules, "iron_sword", 0, "sharpness", 5)));
+        inventories.put(player, gear(armor, item(rules, "iron_sword", "sharpness", 5)));
         engine.evaluateNow(player);
         int broken = engine.cached(player).record().score();
         assertEquals(weaker - (90 + 150), broken);
@@ -334,7 +363,7 @@ class ScoreEngineTest {
 
     @Test
     void unknownEnchantmentsAreReportedForDiagnostics() {
-        inventories.put(player, gear(null, item(rules, "diamond_sword", 0, "customplugin:vampirism", 2)));
+        inventories.put(player, gear(null, item(rules, "diamond_sword", "customplugin:vampirism", 2)));
         engine.evaluateNow(player);
         assertTrue(metrics.unknownEnchantments().contains("sword -> customplugin:vampirism"));
     }

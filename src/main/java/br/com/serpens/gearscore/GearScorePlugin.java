@@ -5,6 +5,7 @@ import br.com.serpens.gearscore.bukkit.GearListener;
 import br.com.serpens.gearscore.bukkit.SnapshotFactory;
 import br.com.serpens.gearscore.command.GearScoreCommand;
 import br.com.serpens.gearscore.config.DatabaseSettings;
+import br.com.serpens.gearscore.config.FileUpdater;
 import br.com.serpens.gearscore.config.Messages;
 import br.com.serpens.gearscore.config.RuleParser;
 import br.com.serpens.gearscore.config.Settings;
@@ -38,9 +39,11 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -80,10 +83,13 @@ public final class GearScorePlugin extends JavaPlugin {
         saveDefaultConfig();
         saveIfMissing("database.yml");
         saveIfMissing("messages.yml");
+        updateFile("config.yml", List.of("legacy/config-1.0.yml", "legacy/config-1.1.yml"), true);
+        updateFile("messages.yml", List.of("legacy/messages-1.1.yml"), false);
+        reloadConfig();
 
         DatabaseSettings databaseSettings;
         try {
-            RuleParser parser = new RuleParser(getConfig(), GearScorePlugin::vanillaMaxLevel);
+            RuleParser parser = new RuleParser(rulesFile(), GearScorePlugin::vanillaMaxLevel);
             this.rules = parser.parse();
             this.settings = Settings.from(getConfig());
             this.messages = loadMessages();
@@ -206,7 +212,7 @@ public final class GearScorePlugin extends JavaPlugin {
      */
     public List<String> reload() {
         reloadConfig();
-        RuleParser parser = new RuleParser(getConfig(), GearScorePlugin::vanillaMaxLevel);
+        RuleParser parser = new RuleParser(rulesFile(), GearScorePlugin::vanillaMaxLevel);
         RuleSet parsed = parser.parse();
         Settings loaded = Settings.from(getConfig());
         Messages loadedMessages = loadMessages();
@@ -216,7 +222,7 @@ public final class GearScorePlugin extends JavaPlugin {
                 loaded.maxPerTick(), loaded.ignoredWorlds(), loaded.pageSize(), current.maxEntries(),
                 current.topCacheMillis(), current.positionRefreshMillis(), loaded.fallback(),
                 current.remoteIntervalMillis(), current.remoteRecheckMillis(), current.remoteBatchSize(),
-                current.remoteMaxBatches());
+                current.remoteMaxBatches(), loaded.detailsMaxItems());
         this.messages = loadedMessages;
         this.rules = parsed;
         this.tierViews = renderTiers(parsed);
@@ -240,6 +246,67 @@ public final class GearScorePlugin extends JavaPlugin {
             file.options().copyDefaults(true);
         }
         return new Messages(file);
+    }
+
+    // Scoring rules come from the file exactly as written, without the bundled defaults
+    // filling gaps: an enchantment the administrator removed must be worth zero, not come
+    // back with its default value.
+    private YamlConfiguration rulesFile() {
+        return YamlConfiguration.loadConfiguration(new File(getDataFolder(), "config.yml"));
+    }
+
+    /**
+     * Updates a file written by an older version. Sections the administrator never changed
+     * take the new defaults, edited sections are kept, and the previous file is saved next
+     * to it before anything is written.
+     */
+    private void updateFile(String name, List<String> legacyResources, boolean scoringRules) {
+        File file = new File(getDataFolder(), name);
+        try {
+            String existing = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            String current = resourceText(name);
+            if (FileUpdater.versionOf(existing) >= FileUpdater.versionOf(current)) {
+                return;
+            }
+            List<String> legacy = new java.util.ArrayList<>();
+            for (String resource : legacyResources) {
+                legacy.add(resourceText(resource));
+            }
+            FileUpdater.Result result = FileUpdater.merge(existing, current, legacy);
+            String text = result.text();
+            if (scoringRules && result.kept().contains("rules-version")) {
+                // The formula changed, so the stored results must be told apart even when
+                // the administrator manages this number.
+                text = FileUpdater.increment(text, "rules-version");
+            }
+            String stamp = java.time.LocalDateTime.now()
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+            File backup = new File(getDataFolder(), name + ".bak-" + stamp);
+            Files.copy(file.toPath(), backup.toPath());
+            Files.writeString(file.toPath(), text, StandardCharsets.UTF_8);
+
+            getLogger().info(name + " updated for this version; previous file saved as " + backup.getName() + ".");
+            if (!result.updated().isEmpty() || !result.added().isEmpty()) {
+                List<String> changed = new java.util.ArrayList<>(result.updated());
+                changed.addAll(result.added());
+                getLogger().info(name + ": sections set to the new defaults: " + String.join(", ", changed));
+            }
+            if (!result.kept().isEmpty()) {
+                getLogger().warning(name + ": customised sections kept as they were, please review them: "
+                        + String.join(", ", result.kept()));
+            }
+        } catch (IOException | RuntimeException e) {
+            getLogger().log(Level.WARNING, "Could not update " + name + ", keeping it as it is: " + e.getMessage());
+        }
+    }
+
+    private String resourceText(String name) throws IOException {
+        try (InputStream in = getResource(name)) {
+            if (in == null) {
+                throw new IOException("missing resource " + name);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
     }
 
     private void saveIfMissing(String resource) {

@@ -209,16 +209,12 @@ public final class ScoreEngine {
     }
 
     private void reportUnknown(ScoreResult result) {
-        for (int i = 0; i < 4; i++) {
-            reportUnknown(result.armor(i));
+        for (int i = 0, n = result.itemCount(); i < n; i++) {
+            reportUnknown(result.item(i));
         }
-        reportUnknown(result.weapon());
     }
 
     private void reportUnknown(ItemScore item) {
-        if (item == null) {
-            return;
-        }
         for (EnchantScore enchant : item.enchants()) {
             if (enchant.status() == EnchantStatus.UNKNOWN) {
                 metrics.unknownEnchantment(item.item().def().type().id() + " -> " + enchant.key());

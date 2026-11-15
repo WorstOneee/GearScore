@@ -4,6 +4,8 @@ import br.com.serpens.gearscore.score.ScoreResult.EnchantScore;
 import br.com.serpens.gearscore.score.ScoreResult.EnchantStatus;
 import br.com.serpens.gearscore.score.ScoreResult.ItemScore;
 
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.Set;
 
@@ -14,6 +16,10 @@ import java.util.Set;
 public final class ScoreCalculator {
 
     private static final EnchantScore[] NO_ENCHANTS = new EnchantScore[0];
+    private static final Comparator<ItemScore> BY_SCORE = (a, b) -> {
+        int order = Double.compare(b.total(), a.total());
+        return order != 0 ? order : a.item().compareTo(b.item());
+    };
 
     private final RuleSet rules;
 
@@ -26,34 +32,32 @@ public final class ScoreCalculator {
     }
 
     public ScoreResult calculate(GearSnapshot snapshot) {
-        ItemScore[] armor = new ItemScore[4];
+        int count = snapshot.size();
+        ItemScore[] items = new ItemScore[count];
         double armorBase = 0.0;
         double armorEnchant = 0.0;
-        for (int i = 0; i < 4; i++) {
-            ItemSnapshot item = snapshot.armor(i);
-            if (item == null) {
-                continue;
-            }
-            ItemScore score = score(item);
-            armor[i] = score;
-            armorBase += score.base();
-            armorEnchant += score.enchant();
-        }
-
-        // Only the single best candidate counts, so duplicates never add up.
-        ItemScore weapon = null;
-        for (int i = 0, n = snapshot.weaponCount(); i < n; i++) {
-            ItemScore score = score(snapshot.weapon(i));
-            if (weapon == null || score.total() > weapon.total()) {
-                weapon = score;
+        double weaponBase = 0.0;
+        double weaponEnchant = 0.0;
+        int armorCount = 0;
+        // One entry per occupied slot, so each item is counted exactly once and equal items
+        // in different slots each contribute.
+        for (int i = 0; i < count; i++) {
+            ItemScore score = score(snapshot.item(i));
+            items[i] = score;
+            if (score.item().def().type().isArmor()) {
+                armorBase += score.base();
+                armorEnchant += score.enchant();
+                armorCount++;
+            } else {
+                weaponBase += score.base();
+                weaponEnchant += score.enchant();
             }
         }
-
-        return new ScoreResult(
-                round(armorBase), round(armorEnchant),
-                weapon == null ? 0 : round(weapon.base()),
-                weapon == null ? 0 : round(weapon.enchant()),
-                armor, weapon, rules);
+        if (count > 1) {
+            Arrays.sort(items, BY_SCORE);
+        }
+        return new ScoreResult(round(armorBase), round(armorEnchant), round(weaponBase), round(weaponEnchant),
+                armorCount, count - armorCount, items, rules);
     }
 
     public ItemScore score(ItemSnapshot item) {

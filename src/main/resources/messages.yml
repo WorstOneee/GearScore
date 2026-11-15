@@ -2,74 +2,74 @@
 #  GearScore - mensagens (formato MiniMessage)
 #  https://docs.advntr.dev/minimessage/format.html
 #  Use /gearscore reload após editar.
+#
+#  O plugin só envia mensagens em resposta a comandos. Nenhuma mensagem é
+#  enviada quando a pontuação muda.
 # ============================================================================
 
-prefix: "<dark_gray>[<gold>GearScore<dark_gray>]<reset> "
+# Versão deste arquivo, usada pela atualização automática. Não altere.
+file-version: 2
+
+prefix: "<gold>GearScore <gray>»<reset> "
 
 no-permission: "<prefix><red>Você não tem permissão para isso."
-players-only: "<prefix><red>Apenas jogadores podem usar este comando sem informar um jogador."
-unknown-command: "<prefix><red>Subcomando desconhecido. Use <white>/gearscore ajuda</white>."
+players-only: "<prefix><red>Informe um jogador: <white>/gs <jogador>"
+unknown-command: "<prefix><red>Comando desconhecido. Use <white>/gs ajuda</white>."
 invalid-page: "<prefix><red>Página inválida."
 
 help:
   header: "<prefix><white>Comandos"
-  self: " <gold>/gs <dark_gray>- <gray>sua pontuação"
-  view: " <gold>/gs ver <jogador> <dark_gray>- <gray>pontuação de outro jogador"
-  details: " <gold>/gs detalhes [jogador] <dark_gray>- <gray>contribuição de cada peça e encantamento"
-  top: " <gold>/gs top [página] <dark_gray>- <gray>ranking"
-  reload: " <gold>/gs reload <dark_gray>- <gray>recarrega as configurações"
-  diag: " <gold>/gs diag <dark_gray>- <gray>diagnóstico de desempenho"
+  self: " <gold>/gs <gray>- <white>sua pontuação"
+  view: " <gold>/gs <jogador> <gray>- <white>pontuação de outro jogador"
+  details: " <gold>/gs detalhes [jogador] <gray>- <white>equipamentos e encantamentos que pontuam"
+  top: " <gold>/gs top [página] <gray>- <white>ranking"
+  reload: " <gold>/gs reload <gray>- <white>recarrega as configurações"
+  diag: " <gold>/gs diag <gray>- <white>diagnóstico técnico"
 
-not-ready: "<prefix><yellow>A pontuação ainda não está disponível. Tente novamente em instantes."
-not-found: "<prefix><red>Nenhum registro de GearScore para <white><player></white>."
-db-unavailable: "<prefix><red>O banco de dados está indisponível no momento. Jogadores online neste servidor continuam consultáveis."
-db-busy: "<prefix><yellow>Muitas consultas em andamento. Tente novamente em alguns segundos."
-db-disabled: "<prefix><red>Este recurso exige o banco de dados, que está desativado."
+not-ready: "<prefix><yellow>A pontuação ainda não está disponível. Tente de novo em instantes."
+not-found: "<prefix><red>Nenhuma pontuação registrada para <white><player></white>."
+db-unavailable: "<prefix><red>Não foi possível consultar agora. Tente novamente em instantes."
+db-busy: "<prefix><yellow>Muitas consultas em andamento. Tente de novo em alguns segundos."
+db-disabled: "<prefix><red>Este recurso não está disponível neste servidor."
 
+# Resposta do /gs e do /gs <jogador>.
 summary:
-  header: "<prefix><white><player></white> <dark_gray>» <gold><bold><score></bold></gold> <dark_gray>(<tier><dark_gray>)"
-  armor: " <gray>Armadura: <white><armor></white> <dark_gray>(base <armor_base> + encantamentos <armor_enchant>)"
-  weapon: " <gray>Arma: <white><weapon></white> <dark_gray>(base <weapon_base> + encantamentos <weapon_enchant>) <gray>- <white><item></white> <dark_gray>[<slot>]"
-  weapon-none: " <gray>Arma: <white>0</white> <dark_gray>(nenhuma arma na hotbar ou na mão secundária)"
-  armor-simple: " <gray>Armadura: <white><armor></white>"
-  weapon-simple: " <gray>Arma: <white><weapon></white>"
-  updated: " <gray>Atualizado <white><updated></white> em <white><server></white> <dark_gray>(regras v<version>)"
-  note: " <dark_gray>Estimativa da força do equipamento. Não garante vitória em PvP."
+  line: "<prefix><white><player></white> <gray>•</gray> <gold><score> GS</gold> <gray>•</gray> <tier>"
 
+# Resposta do /gs detalhes [jogador].
 details:
-  header: "<prefix>Detalhes de <white><player></white> <dark_gray>» <gold><bold><score></bold></gold>"
-  empty: " <dark_gray>▪ <slot>: vazio"
-  item: " <yellow>▪ <slot>: <white><item></white> <dark_gray>» <gold><total></gold> <dark_gray>(base <base> + encantamentos <enchant>)"
-  enchant: "     <gray><name> <level> <dark_gray>» <white><points></white> <dark_gray><note>"
-  weapon-note: " <dark_gray>Apenas a melhor arma da hotbar/mão secundária é contada."
-  unavailable: "<prefix><yellow>O detalhamento só existe para jogadores online em um servidor de origem oficial."
+  header: "<prefix><white><player></white> <gray>•</gray> <gold><score> GS</gold> <gray>•</gray> <tier>"
+  armor: " <yellow>Armaduras <gray>(<count>)<gray>: <white><total></white> <gray>= <white><base></white> base + <white><enchant></white> encantamentos"
+  weapons: " <yellow>Armas <gray>(<count>)<gray>: <white><total></white> <gray>= <white><base></white> base + <white><enchant></white> encantamentos"
+  # Uma linha por equipamento. Passe o mouse para ver os encantamentos.
+  item: " <gray>▪ <white><item></white> <gold><total></gold> <gray>(<base> base + <enchant> enc.)"
+  # Linhas do texto exibido ao passar o mouse sobre um equipamento.
+  hover-base: "<gray>Base: <white><base>"
+  hover-enchant: "<gray><name> <level>: <white><points></white> <yellow><note>"
+  hover-none: "<gray>Sem encantamentos"
+  more: " <gray>▪ + <white><count></white> outros equipamentos: <gold><total></gold>"
+  empty: " <gray>Nenhum equipamento que pontue no inventário."
+  updated: " <gray>Atualizado <white><updated></white>"
+  # Exibida somente para quem tem permissão administrativa.
+  admin: " <gray>Origem: <white><server></white> <gray>• regras v<white><version></white>"
+  unavailable: "<prefix><yellow>O detalhamento só está disponível para jogadores online no servidor principal."
 
 note:
-  capped: "(nível acima do limite: contado como o máximo)"
-  over-limit: "(nível acima do limite: não pontua)"
+  capped: "(acima do limite: contado como o máximo)"
+  over-limit: "(acima do limite: não pontua)"
   incompatible: "(combinação incompatível: ignorado)"
-  unknown: "(não configurado: vale 0)"
-
-slot:
-  helmet: "Capacete"
-  chestplate: "Peitoral"
-  leggings: "Calças"
-  boots: "Botas"
-  weapon: "Arma"
-  hotbar: "hotbar {n}"
-  offhand: "mão secundária"
+  unknown: "(sem regra para este equipamento: vale 0)"
 
 top:
-  header: "<prefix><white>Ranking <dark_gray>- <gray>página <page>/<pages> <dark_gray>(lido <age>)"
-  line: " <gray>#<position> <white><player></white> <dark_gray>» <gold><score></gold> <dark_gray>(<tier><dark_gray>) <dark_gray>- <updated>"
-  empty: "<prefix><gray>O ranking ainda está vazio."
-  footer: " <dark_gray>Mostra o último equipamento avaliado de cada jogador, não um recorde histórico."
+  header: "<prefix><white>Ranking <gray>• página <white><page></white>/<white><pages></white>"
+  line: " <yellow>#<position> <white><player></white> <gray>•</gray> <gold><score> GS</gold> <gray>•</gray> <tier>"
+  empty: "<prefix><white>O ranking ainda está vazio."
 
 reload:
-  ok: "<prefix><green>Configuração recarregada. <gray>Regras v<version>; <players> jogador(es) online serão reavaliados gradualmente."
+  ok: "<prefix><green>Configuração recarregada. <white>Regras v<version>; <players> jogador(es) online serão reavaliados aos poucos."
   warning: "<prefix><yellow>Aviso: <white><warning>"
   failed: "<prefix><red>Falha ao recarregar; as regras anteriores foram mantidas: <white><error>"
-  restart: "<prefix><yellow>Mudanças em server.name, official-sources, ranking e database.yml só valem após reiniciar."
+  restart: "<prefix><yellow>Mudanças em server, query-refresh, ranking e database.yml só valem após reiniciar."
 
 time:
   now: "agora"

@@ -28,8 +28,6 @@ public final class RuleSet {
     private final Set<String>[] incompatibleGroups;
     private final Tier[] tiers;
     private final List<CustomItemRule> customItems;
-    private final boolean hotbarWeapons;
-    private final boolean offhandWeapon;
 
     public RuleSet(int version,
                    Map<String, GearDef> gear,
@@ -39,9 +37,7 @@ public final class RuleSet {
                    Incompatible incompatible,
                    Set<String>[] incompatibleGroups,
                    Tier[] tiers,
-                   List<CustomItemRule> customItems,
-                   boolean hotbarWeapons,
-                   boolean offhandWeapon) {
+                   List<CustomItemRule> customItems) {
         this.version = version;
         this.gear = Map.copyOf(gear);
         this.enchantRules = enchantRules;
@@ -51,8 +47,6 @@ public final class RuleSet {
         this.incompatibleGroups = incompatibleGroups;
         this.tiers = tiers;
         this.customItems = List.copyOf(customItems);
-        this.hotbarWeapons = hotbarWeapons;
-        this.offhandWeapon = offhandWeapon;
     }
 
     public int version() {
@@ -86,14 +80,6 @@ public final class RuleSet {
 
     public List<CustomItemRule> customItems() {
         return customItems;
-    }
-
-    public boolean hotbarWeapons() {
-        return hotbarWeapons;
-    }
-
-    public boolean offhandWeapon() {
-        return offhandWeapon;
     }
 
     public Tier[] tiers() {

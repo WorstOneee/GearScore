@@ -7,16 +7,17 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
-import org.bukkit.inventory.ItemStack;
 
 /**
  * Equipment change detection, registered only on official source servers. Handlers do a
  * constant amount of work: decide whether the change can matter and, if so, mark the player
- * for a debounced evaluation. No movement events, no scans, nothing per tick.
+ * for a debounced evaluation. No movement events, no scans, nothing per tick, and no message
+ * is ever sent to the player from here.
  */
 public final class GearListener implements Listener {
 
@@ -26,14 +27,17 @@ public final class GearListener implements Listener {
         this.plugin = plugin;
     }
 
-    /** Covers clicks, drags, pickups, drops, breaks, swaps and changes made by other plugins. */
+    /**
+     * Any slot of the player's own inventory: clicks, shift-clicks, drags, pickups, drops,
+     * breaks, hand swaps, death and changes made by other plugins all end up here.
+     */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onSlotChange(PlayerInventorySlotChangeEvent event) {
         int slot = event.getSlot();
-        if (slot > 8 && (slot < SnapshotFactory.SLOT_BOOTS || slot > SnapshotFactory.SLOT_OFFHAND)) {
+        if (slot < 0 || slot >= SnapshotFactory.SLOT_COUNT) {
             return;
         }
-        if (irrelevant(event.getOldItemStack(), event.getNewItemStack())) {
+        if (!plugin.snapshots().changesGear(event.getOldItemStack(), event.getNewItemStack())) {
             plugin.metrics().filteredEvents.increment();
             return;
         }
@@ -43,7 +47,7 @@ public final class GearListener implements Listener {
     /** Armor is tracked by the entity itself, so this also fires while another container is open. */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onArmorChange(PlayerArmorChangeEvent event) {
-        if (irrelevant(event.getOldItem(), event.getNewItem())) {
+        if (!plugin.snapshots().changesGear(event.getOldItem(), event.getNewItem())) {
             plugin.metrics().filteredEvents.increment();
             return;
         }
@@ -59,6 +63,11 @@ public final class GearListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
+    public void onDeath(PlayerDeathEvent event) {
+        plugin.requestEvaluation(event.getEntity().getUniqueId());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onRespawn(PlayerRespawnEvent event) {
         plugin.requestEvaluation(event.getPlayer().getUniqueId());
     }
@@ -67,23 +76,5 @@ public final class GearListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onWorldChange(PlayerChangedWorldEvent event) {
         plugin.requestEvaluation(event.getPlayer().getUniqueId());
-    }
-
-    /**
-     * True when the change cannot affect the score: neither item is gear, or only the
-     * amount or durability changed. With custom item rules the PDC may differ, so the
-     * decision is left to the snapshot comparison.
-     */
-    private boolean irrelevant(ItemStack before, ItemStack after) {
-        SnapshotFactory snapshots = plugin.snapshots();
-        if (before == null || after == null || snapshots.hasCustomRules()) {
-            return false;
-        }
-        boolean gearBefore = snapshots.isGear(before.getType());
-        boolean gearAfter = snapshots.isGear(after.getType());
-        if (!gearBefore && !gearAfter) {
-            return true;
-        }
-        return before.getType() == after.getType() && before.getEnchantments().equals(after.getEnchantments());
     }
 }

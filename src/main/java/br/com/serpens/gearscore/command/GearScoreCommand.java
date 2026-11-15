@@ -1,14 +1,12 @@
 package br.com.serpens.gearscore.command;
 
 import br.com.serpens.gearscore.GearScorePlugin;
-import br.com.serpens.gearscore.bukkit.SnapshotFactory;
 import br.com.serpens.gearscore.config.Messages;
 import br.com.serpens.gearscore.engine.Metrics;
 import br.com.serpens.gearscore.engine.RemoteScores;
 import br.com.serpens.gearscore.engine.ScoreEngine;
 import br.com.serpens.gearscore.model.CachedScore;
 import br.com.serpens.gearscore.model.PlayerRecord;
-import br.com.serpens.gearscore.score.GearType;
 import br.com.serpens.gearscore.score.ScoreResult;
 import br.com.serpens.gearscore.score.ScoreResult.EnchantScore;
 import br.com.serpens.gearscore.score.ScoreResult.ItemScore;
@@ -16,6 +14,7 @@ import br.com.serpens.gearscore.storage.Database;
 import br.com.serpens.gearscore.storage.LookupService;
 import br.com.serpens.gearscore.storage.WriteQueue;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import org.bukkit.Bukkit;
@@ -84,7 +83,16 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
                 }
             }
             case "ajuda", "help" -> help(sender);
-            default -> send(sender, "unknown-command");
+            default -> {
+                // /gs <player>
+                if (args.length == 1 && args[0].matches("[A-Za-z0-9_.*]{1,32}")) {
+                    if (allowed(sender, PERM_OTHERS)) {
+                        other(sender, args[0], false);
+                    }
+                } else {
+                    send(sender, "unknown-command");
+                }
+            }
         }
         return true;
     }
@@ -99,27 +107,13 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
         if (!allowed(sender, details ? PERM_DETAILS : PERM_USE)) {
             return;
         }
-        CachedScore score = plugin.cached(player.getUniqueId());
-        if (score == null) {
-            send(sender, "not-ready");
-        } else if (details) {
-            details(sender, score);
-        } else {
-            summary(sender, score.record(), score.detail());
-        }
+        show(sender, plugin.cached(player.getUniqueId()), details);
     }
 
     private void other(CommandSender sender, String name, boolean details) {
         Player online = Bukkit.getPlayerExact(name);
         if (online != null) {
-            CachedScore score = plugin.cached(online.getUniqueId());
-            if (score == null) {
-                send(sender, "not-ready");
-            } else if (details) {
-                details(sender, score);
-            } else {
-                summary(sender, score.record(), score.detail());
-            }
+            show(sender, plugin.cached(online.getUniqueId()), details);
             return;
         }
         if (details) {
@@ -137,42 +131,31 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
             } else if (found.isEmpty()) {
                 send(sender, "not-found", Placeholder.unparsed("player", name));
             } else {
-                summary(sender, found.get(), null);
+                summary(sender, found.get());
             }
         }));
     }
 
-    private void summary(CommandSender sender, PlayerRecord record, ScoreResult detail) {
-        Messages messages = plugin.messages();
-        send(sender, "summary.header",
+    private void show(CommandSender sender, CachedScore score, boolean details) {
+        if (score == null) {
+            send(sender, "not-ready");
+        } else if (details) {
+            details(sender, score);
+        } else {
+            summary(sender, score.record());
+        }
+    }
+
+    /** The whole public answer: player, total and tier. */
+    private void summary(CommandSender sender, PlayerRecord record) {
+        send(sender, "summary.line", identity(record));
+    }
+
+    private TagResolver identity(PlayerRecord record) {
+        return TagResolver.resolver(
                 Placeholder.unparsed("player", record.name()),
                 number("score", record.score()),
                 Placeholder.component("tier", plugin.tierView(record.tier()).component()));
-        if (detail != null) {
-            send(sender, "summary.armor",
-                    number("armor", detail.armorScore()),
-                    number("armor_base", detail.armorBase()),
-                    number("armor_enchant", detail.armorEnchant()));
-            ItemScore weapon = detail.weapon();
-            if (weapon == null) {
-                send(sender, "summary.weapon-none");
-            } else {
-                send(sender, "summary.weapon",
-                        number("weapon", detail.weaponScore()),
-                        number("weapon_base", detail.weaponBase()),
-                        number("weapon_enchant", detail.weaponEnchant()),
-                        Placeholder.component("item", itemName(weapon)),
-                        Placeholder.unparsed("slot", slotName(weapon.item().slot())));
-            }
-        } else {
-            send(sender, "summary.armor-simple", number("armor", record.armorScore()));
-            send(sender, "summary.weapon-simple", number("weapon", record.weaponScore()));
-        }
-        send(sender, "summary.updated",
-                Placeholder.unparsed("updated", messages.ago(record.updatedAt(), System.currentTimeMillis())),
-                Placeholder.unparsed("server", record.server()),
-                number("version", record.rulesVersion()));
-        send(sender, "summary.note");
     }
 
     private void details(CommandSender sender, CachedScore score) {
@@ -181,47 +164,67 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
             send(sender, "details.unavailable");
             return;
         }
-        send(sender, "details.header",
-                Placeholder.unparsed("player", score.record().name()),
-                number("score", detail.total()));
-        for (int i = 0; i < 4; i++) {
-            item(sender, plugin.messages().raw("slot." + GearType.ARMOR_SLOTS[i].id()), detail.armor(i));
+        PlayerRecord record = score.record();
+        Messages messages = plugin.messages();
+        send(sender, "details.header", identity(record));
+        if (detail.itemCount() == 0) {
+            send(sender, "details.empty");
+        } else {
+            send(sender, "details.armor", number("count", detail.armorCount()),
+                    number("total", detail.armorScore()), number("base", detail.armorBase()),
+                    number("enchant", detail.armorEnchant()));
+            send(sender, "details.weapons", number("count", detail.weaponCount()),
+                    number("total", detail.weaponScore()), number("base", detail.weaponBase()),
+                    number("enchant", detail.weaponEnchant()));
+
+            int listed = Math.min(detail.itemCount(), plugin.settings().detailsMaxItems());
+            for (int i = 0; i < listed; i++) {
+                item(sender, detail.item(i));
+            }
+            if (listed < detail.itemCount()) {
+                double rest = 0.0;
+                for (int i = listed; i < detail.itemCount(); i++) {
+                    rest += detail.item(i).total();
+                }
+                send(sender, "details.more", number("count", detail.itemCount() - listed), decimal("total", rest));
+            }
         }
-        ItemScore weapon = detail.weapon();
-        String weaponSlot = plugin.messages().raw("slot.weapon");
-        if (weapon != null) {
-            weaponSlot += " [" + slotName(weapon.item().slot()) + "]";
+        send(sender, "details.updated",
+                Placeholder.unparsed("updated", messages.ago(record.updatedAt(), System.currentTimeMillis())));
+        if (sender.hasPermission(PERM_DIAG)) {
+            send(sender, "details.admin", Placeholder.unparsed("server", record.server()),
+                    number("version", record.rulesVersion()));
         }
-        item(sender, weaponSlot, weapon);
-        send(sender, "details.weapon-note");
     }
 
-    private void item(CommandSender sender, String slot, ItemScore item) {
-        if (item == null) {
-            send(sender, "details.empty", Placeholder.unparsed("slot", slot));
-            return;
+    private void item(CommandSender sender, ItemScore item) {
+        Messages messages = plugin.messages();
+        Component hover = messages.get("details.hover-base", decimal("base", item.base()));
+        if (item.enchants().length == 0) {
+            hover = hover.appendNewline().append(messages.get("details.hover-none"));
         }
-        send(sender, "details.item",
-                Placeholder.unparsed("slot", slot),
-                Placeholder.component("item", itemName(item)),
-                decimal("total", item.total()),
-                decimal("base", item.base()),
-                decimal("enchant", item.enchant()));
         for (EnchantScore enchant : item.enchants()) {
             String note = switch (enchant.status()) {
                 case COUNTED -> "";
-                case CAPPED -> plugin.messages().raw("note.capped");
-                case OVER_LIMIT -> plugin.messages().raw("note.over-limit");
-                case INCOMPATIBLE -> plugin.messages().raw("note.incompatible");
-                case UNKNOWN -> plugin.messages().raw("note.unknown");
+                case CAPPED -> messages.raw("note.capped");
+                case OVER_LIMIT -> messages.raw("note.over-limit");
+                case INCOMPATIBLE -> messages.raw("note.incompatible");
+                case UNKNOWN -> messages.raw("note.unknown");
             };
-            send(sender, "details.enchant",
+            hover = hover.appendNewline().append(messages.get("details.hover-enchant",
                     Placeholder.component("name", Component.translatable(
                             "enchantment." + enchant.key().replace(':', '.'), enchant.key())),
                     Placeholder.component("level", level(enchant.level())),
                     decimal("points", enchant.points()),
-                    Placeholder.unparsed("note", note));
+                    Placeholder.unparsed("note", note)));
         }
+        Component line = messages.get("details.item",
+                Placeholder.component("item", Component.translatable(
+                        item.item().def().translationKey(), item.item().def().material())),
+                decimal("total", item.total()),
+                decimal("base", item.base()),
+                decimal("enchant", item.enchant()));
+        sender.sendMessage(line.hoverEvent(HoverEvent.showText(hover)));
     }
 
     private void top(CommandSender sender, String pageArgument) {
@@ -251,23 +254,13 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
                 send(sender, "top.empty");
                 return;
             }
-            Messages messages = plugin.messages();
             int pageSize = plugin.settings().pageSize();
             int pages = (rows.size() + pageSize - 1) / pageSize;
             int page = Math.min(requested, pages);
-            long now = System.currentTimeMillis();
-            send(sender, "top.header", number("page", page), number("pages", pages),
-                    Placeholder.unparsed("age", messages.ago(snapshot.loadedAt(), now)));
+            send(sender, "top.header", number("page", page), number("pages", pages));
             for (int i = (page - 1) * pageSize, end = Math.min(rows.size(), page * pageSize); i < end; i++) {
-                PlayerRecord row = rows.get(i);
-                send(sender, "top.line",
-                        number("position", i + 1),
-                        Placeholder.unparsed("player", row.name()),
-                        number("score", row.score()),
-                        Placeholder.component("tier", plugin.tierView(row.tier()).component()),
-                        Placeholder.unparsed("updated", messages.ago(row.updatedAt(), now)));
+                send(sender, "top.line", number("position", i + 1), identity(rows.get(i)));
             }
-            send(sender, "top.footer");
         }));
     }
 
@@ -288,6 +281,7 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    /** Technical view for administrators; the only place that names servers and internals. */
     private void diagnostics(CommandSender sender) {
         Metrics m = plugin.metrics();
         ScoreEngine engine = plugin.engine();
@@ -295,9 +289,10 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
         WriteQueue writes = plugin.writes();
         LookupService lookups = plugin.lookups();
 
-        line(sender, "<gold>GearScore <gray>- diagnóstico <dark_gray>(" + plugin.settings().serverName() + ", "
-                + (plugin.settings().official() ? "origem oficial" : "somente consulta") + ", regras v"
-                + plugin.rules().version() + ")");
+        line(sender, "<gold>GearScore <gray>» <white>diagnóstico");
+        line(sender, " <gray>Servidor: <white>" + plugin.settings().serverName() + " <gray>("
+                + (plugin.settings().official() ? "origem oficial" : "somente consulta")
+                + ") • regras v<white>" + plugin.rules().version());
         if (engine != null) {
             long captures = m.captures.sum();
             double average = captures == 0 ? 0.0 : m.evaluationNanos.sum() / (double) captures / 1000.0;
@@ -306,8 +301,8 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
             line(sender, " <gray>Eventos filtrados no listener: <white>" + m.filteredEvents.sum());
             line(sender, " <gray>Pedidos de avaliação: <white>" + m.requests.sum()
                     + "<gray>, agrupados (debounce): <white>" + m.coalesced.sum());
-            line(sender, " <gray>Leituras de equipamento: <white>" + captures
-                    + "<gray>, descartadas sem mudança: <white>" + m.unchanged.sum()
+            line(sender, " <gray>Leituras de inventário: <white>" + captures
+                    + "<gray>, sem mudança: <white>" + m.unchanged.sum()
                     + "<gray>, recalculadas: <white>" + m.evaluations.sum());
             line(sender, " <gray>Tempo por leitura+cálculo: média <white>" + String.format(Locale.ROOT, "%.1f", average)
                     + " µs<gray>, máximo <white>"
@@ -351,7 +346,9 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
     private void help(CommandSender sender) {
         send(sender, "help.header");
         send(sender, "help.self");
-        send(sender, "help.view");
+        if (sender.hasPermission(PERM_OTHERS)) {
+            send(sender, "help.view");
+        }
         send(sender, "help.details");
         send(sender, "help.top");
         if (sender.hasPermission(PERM_RELOAD)) {
@@ -410,33 +407,16 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
         return Placeholder.unparsed(name, text);
     }
 
-    private static Component itemName(ItemScore item) {
-        return Component.translatable(item.item().def().translationKey(), item.item().def().material());
-    }
-
     private static Component level(int level) {
         return level >= 1 && level <= 10
                 ? Component.translatable("enchantment.level." + level, Integer.toString(level))
                 : Component.text(level);
     }
 
-    private String slotName(int slot) {
-        if (slot == SnapshotFactory.SLOT_OFFHAND) {
-            return plugin.messages().raw("slot.offhand");
-        }
-        if (slot >= 0 && slot <= 8) {
-            return plugin.messages().raw("slot.hotbar").replace("{n}", Integer.toString(slot + 1));
-        }
-        return plugin.messages().raw("slot.weapon");
-    }
-
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> options = new ArrayList<>();
         if (args.length == 1) {
-            if (sender.hasPermission(PERM_OTHERS)) {
-                options.add("ver");
-            }
             if (sender.hasPermission(PERM_DETAILS)) {
                 options.add("detalhes");
             }
@@ -450,6 +430,11 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
                 options.add("diag");
             }
             options.add("ajuda");
+            if (sender.hasPermission(PERM_OTHERS)) {
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    options.add(player.getName());
+                }
+            }
         } else if (args.length == 2) {
             String sub = args[0].toLowerCase(Locale.ROOT);
             boolean view = (sub.equals("ver") || sub.equals("view")) && sender.hasPermission(PERM_OTHERS);

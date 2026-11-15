@@ -3,7 +3,6 @@ package br.com.serpens.gearscore.bukkit;
 import br.com.serpens.gearscore.score.CustomItemRule;
 import br.com.serpens.gearscore.score.GearDef;
 import br.com.serpens.gearscore.score.GearSnapshot;
-import br.com.serpens.gearscore.score.GearType;
 import br.com.serpens.gearscore.score.ItemSnapshot;
 import br.com.serpens.gearscore.score.RuleSet;
 import io.papermc.paper.persistence.PersistentDataContainerView;
@@ -15,25 +14,28 @@ import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.persistence.PersistentDataType;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
- * Reads the 4 armor slots, the hotbar and the off hand into a {@link GearSnapshot}.
- * Server thread only. Reads material, real enchantments and the configured PDC keys;
- * never names, lore, model data, durability or amounts.
+ * Reads a player's own inventory into a {@link GearSnapshot}: the 36 storage slots (hotbar
+ * included), the 4 armor slots and the off hand, each slot exactly once. The main hand is
+ * a hotbar slot and is not read a second time. Ender chest, open containers, the cursor,
+ * the crafting grid and the contents of shulker boxes or bundles are never looked at.
+ *
+ * Server thread only. Per slot it reads the material and, for configured gear only, the
+ * real enchantments and the configured PDC keys; never names, lore, model data, durability
+ * or amounts. Enchanted books, blocks, food and other items are skipped by material, no
+ * matter what enchantments or glint they carry.
  */
 public final class SnapshotFactory {
 
-    public static final int SLOT_BOOTS = 36;
-    public static final int SLOT_LEGGINGS = 37;
-    public static final int SLOT_CHESTPLATE = 38;
-    public static final int SLOT_HELMET = 39;
-    public static final int SLOT_OFFHAND = 40;
+    /** Bukkit slot indexes: 0-8 hotbar, 9-35 storage, 36-39 armor, 40 off hand. */
+    public static final int SLOT_COUNT = 41;
 
     private record Matcher(CustomItemRule rule, NamespacedKey key, int kind, String text, long number) {
     }
@@ -47,14 +49,12 @@ public final class SnapshotFactory {
     private final Matcher[] matchers;
     private final Map<String, GearDef> customDefs = new HashMap<>();
     private final Map<Enchantment, String> enchantKeys = new IdentityHashMap<>();
-    private final boolean hotbar;
-    private final boolean offhand;
-    private final ItemSnapshot[] scratch = new ItemSnapshot[10];
+    private final ItemSnapshot[] scratch = new ItemSnapshot[SLOT_COUNT];
     private final List<String> unknownMaterials = new ArrayList<>();
 
     public SnapshotFactory(RuleSet rules) {
         for (GearDef def : rules.gear().values()) {
-            Material material = Material.getMaterial(def.material().toUpperCase(java.util.Locale.ROOT));
+            Material material = Material.getMaterial(def.material().toUpperCase(Locale.ROOT));
             if (material == null || !material.isItem()) {
                 unknownMaterials.add(def.material());
                 continue;
@@ -84,8 +84,6 @@ public final class SnapshotFactory {
             compiled.add(new Matcher(rule, key, kind, rule.pdcValue(), number));
         }
         this.matchers = compiled.toArray(new Matcher[0]);
-        this.hotbar = rules.hotbarWeapons();
-        this.offhand = rules.offhandWeapon();
     }
 
     /** Configured materials that do not exist in this server version. */
@@ -93,45 +91,58 @@ public final class SnapshotFactory {
         return unknownMaterials;
     }
 
-    public boolean hasCustomRules() {
-        return matchers.length > 0;
+    /**
+     * Constant-time test used by the listener: can replacing {@code before} with
+     * {@code after} in a slot change the set of scored items? False when neither is gear,
+     * or when only the amount or durability changed.
+     */
+    public boolean changesGear(ItemStack before, ItemStack after) {
+        boolean gearBefore = mayScore(before);
+        boolean gearAfter = mayScore(after);
+        if (!gearBefore && !gearAfter) {
+            return false;
+        }
+        if (gearBefore != gearAfter || before.getType() != after.getType()) {
+            return true;
+        }
+        if (matchers.length > 0
+                && !(before.getPersistentDataContainer().isEmpty() && after.getPersistentDataContainer().isEmpty())) {
+            // A configured PDC key may differ; let the snapshot comparison decide.
+            return true;
+        }
+        return !before.getEnchantments().equals(after.getEnchantments());
     }
 
-    public boolean isGear(Material material) {
-        return defs.containsKey(material);
+    private boolean mayScore(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return false;
+        }
+        if (defs.containsKey(stack.getType())) {
+            return true;
+        }
+        // Without custom rules only configured materials score; with them, an item needs
+        // data in its container to be a candidate at all.
+        return matchers.length > 0 && !stack.getPersistentDataContainer().isEmpty();
     }
 
     public GearSnapshot capture(PlayerInventory inventory) {
-        ItemSnapshot[] armor = {
-                read(inventory.getHelmet(), SLOT_HELMET, GearType.HELMET),
-                read(inventory.getChestplate(), SLOT_CHESTPLATE, GearType.CHESTPLATE),
-                read(inventory.getLeggings(), SLOT_LEGGINGS, GearType.LEGGINGS),
-                read(inventory.getBoots(), SLOT_BOOTS, GearType.BOOTS)
-        };
         int count = 0;
-        if (hotbar) {
-            for (int slot = 0; slot < 9; slot++) {
-                ItemSnapshot item = read(inventory.getItem(slot), slot, null);
-                if (item != null) {
-                    scratch[count++] = item;
-                }
-            }
-        }
-        if (offhand) {
-            ItemSnapshot item = read(inventory.getItemInOffHand(), SLOT_OFFHAND, null);
+        // getItem covers storage, armor and off hand by index, one slot at a time.
+        for (int slot = 0; slot < SLOT_COUNT; slot++) {
+            ItemSnapshot item = read(inventory.getItem(slot));
             if (item != null) {
                 scratch[count++] = item;
             }
         }
-        ItemSnapshot[] weapons = count == 0 ? null : Arrays.copyOf(scratch, count);
-        Arrays.fill(scratch, 0, count, null);
-        return new GearSnapshot(armor, weapons);
+        if (count == 0) {
+            return GearSnapshot.EMPTY;
+        }
+        GearSnapshot snapshot = new GearSnapshot(scratch, count);
+        java.util.Arrays.fill(scratch, 0, count, null);
+        return snapshot;
     }
 
-    /**
-     * @param armorSlot the armor type this slot accepts, or null for a weapon candidate
-     */
-    private ItemSnapshot read(ItemStack stack, int slot, GearType armorSlot) {
+    private ItemSnapshot read(ItemStack stack) {
         if (stack == null || stack.isEmpty()) {
             return null;
         }
@@ -147,14 +158,11 @@ public final class SnapshotFactory {
         if (def == null) {
             return null;
         }
-        if (armorSlot != null ? def.type() != armorSlot : def.type().isArmor()) {
-            return null;
-        }
 
         Map<Enchantment, Integer> enchantments = stack.getEnchantments();
         int size = enchantments.size();
         if (size == 0) {
-            return new ItemSnapshot(def, slot, ItemSnapshot.NO_KEYS, ItemSnapshot.NO_LEVELS, custom);
+            return new ItemSnapshot(def, ItemSnapshot.NO_KEYS, ItemSnapshot.NO_LEVELS, custom);
         }
         String[] keys = new String[size];
         int[] levels = new int[size];
@@ -173,7 +181,7 @@ public final class SnapshotFactory {
             levels[position] = level;
             filled++;
         }
-        return new ItemSnapshot(def, slot, keys, levels, custom);
+        return new ItemSnapshot(def, keys, levels, custom);
     }
 
     private String keyOf(Enchantment enchantment) {

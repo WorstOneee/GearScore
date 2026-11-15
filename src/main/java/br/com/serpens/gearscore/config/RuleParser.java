@@ -50,6 +50,10 @@ public final class RuleParser {
         parseArmor(gear);
         parseWeapons(gear);
         gear.keySet().removeAll(ignored);
+        if (gear.isEmpty()) {
+            // An unreadable or truncated file must not turn every score into zero.
+            throw new IllegalArgumentException("config.yml defines no armor or weapon to score");
+        }
 
         return new RuleSet(
                 root.getInt("rules-version", 1),
@@ -60,9 +64,7 @@ public final class RuleParser {
                 parseEnum(RuleSet.Incompatible.class, "enchantments.incompatible.mode", RuleSet.Incompatible.HIGHEST),
                 parseGroups(),
                 parseTiers(),
-                parseCustomItems(),
-                root.getBoolean("evaluation.weapon-slots.hotbar", true),
-                root.getBoolean("evaluation.weapon-slots.offhand", true));
+                parseCustomItems());
     }
 
     private void parseArmor(Map<String, GearDef> gear) {

@@ -7,6 +7,7 @@ import br.com.serpens.gearscore.score.ItemSnapshot;
 import br.com.serpens.gearscore.score.RuleSet;
 import org.bukkit.configuration.file.YamlConfiguration;
 
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +23,14 @@ import java.util.function.Consumer;
 public final class TestRules {
 
     private TestRules() {
+    }
+
+    public static String resource(String name) {
+        try (InputStream in = TestRules.class.getResourceAsStream("/" + name)) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     public static YamlConfiguration defaultConfig() {
@@ -52,7 +61,7 @@ public final class TestRules {
     /**
      * @param enchants alternating enchantment name and level, e.g. "protection", 4
      */
-    public static ItemSnapshot item(RuleSet rules, String material, int slot, Object... enchants) {
+    public static ItemSnapshot item(RuleSet rules, String material, Object... enchants) {
         GearDef def = rules.gear().get(material);
         if (def == null) {
             throw new IllegalArgumentException("unknown gear " + material);
@@ -64,22 +73,38 @@ public final class TestRules {
         }
         String[] keys = sorted.keySet().toArray(new String[0]);
         int[] levels = sorted.values().stream().mapToInt(Integer::intValue).toArray();
-        return new ItemSnapshot(def, slot, keys, levels, null);
+        return new ItemSnapshot(def, keys, levels, null);
     }
 
     /** Full armor set of one material with the same enchantments on every piece. */
     public static ItemSnapshot[] armorSet(RuleSet rules, String material, Object... enchants) {
         return new ItemSnapshot[]{
-                item(rules, material + "_helmet", 39, enchants),
-                item(rules, material + "_chestplate", 38, enchants),
-                item(rules, material + "_leggings", 37, enchants),
-                item(rules, material + "_boots", 36, enchants)
+                item(rules, material + "_helmet", enchants),
+                item(rules, material + "_chestplate", enchants),
+                item(rules, material + "_leggings", enchants),
+                item(rules, material + "_boots", enchants)
         };
     }
 
-    public static GearSnapshot gear(ItemSnapshot[] armor, ItemSnapshot... weapons) {
-        ItemSnapshot[] slots = armor == null ? new ItemSnapshot[4] : armor;
-        List<ItemSnapshot> candidates = new ArrayList<>(List.of(weapons));
-        return new GearSnapshot(slots, candidates.toArray(new ItemSnapshot[0]));
+    /** An inventory holding the given items; null entries stand for empty slots. */
+    public static GearSnapshot gear(ItemSnapshot[] set, ItemSnapshot... more) {
+        List<ItemSnapshot> items = new ArrayList<>();
+        if (set != null) {
+            for (ItemSnapshot item : set) {
+                if (item != null) {
+                    items.add(item);
+                }
+            }
+        }
+        for (ItemSnapshot item : more) {
+            if (item != null) {
+                items.add(item);
+            }
+        }
+        return new GearSnapshot(items.toArray(new ItemSnapshot[0]), items.size());
+    }
+
+    public static GearSnapshot carrying(ItemSnapshot... items) {
+        return gear(null, items);
     }
 }
