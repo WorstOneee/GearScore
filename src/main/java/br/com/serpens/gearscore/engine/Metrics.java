@@ -32,7 +32,19 @@ public final class Metrics {
 
     public final LongAdder writesQueued = new LongAdder();
     public final LongAdder writesMerged = new LongAdder();
+    /** Entries the queue gave up to stay within its limit (recoverable or not). */
     public final LongAdder writesDropped = new LongAdder();
+    /** Results refused because the queue was full; their owner submits them again later. */
+    public final LongAdder writesRejected = new LongAdder();
+    /** Results submitted again after being refused or dropped, and accepted. */
+    public final LongAdder writesRecovered = new LongAdder();
+    /** Entries given up with no copy left anywhere; fixed on the player's next join. */
+    public final LongAdder writesLost = new LongAdder();
+    /** Times the unconfirmed entries were saved to the spool file. */
+    public final LongAdder spoolSaves = new LongAdder();
+    /** Entries loaded from the spool file left by a previous run. */
+    public final LongAdder spoolRecovered = new LongAdder();
+    public final LongAdder spoolErrors = new LongAdder();
     public final LongAdder rowsWritten = new LongAdder();
     public final LongAdder writeBatches = new LongAdder();
     public final LongAdder readQueries = new LongAdder();

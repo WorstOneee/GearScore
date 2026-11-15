@@ -78,11 +78,17 @@ class EngineBenchmark {
 
         Simulation(int count, ScoreEngine.Sink extraSink) {
             this.engine = new ScoreEngine(rules, "newera",
-                    id -> fresh(inventories.get(id), layout.getOrDefault(id, 0)), record -> {
-                changes++;
-                pendingWrites.put(record.uuid(), record);
-                if (extraSink != null) {
-                    extraSink.changed(record);
+                    id -> fresh(inventories.get(id), layout.getOrDefault(id, 0)), new ScoreEngine.Sink() {
+                @Override
+                public boolean submit(PlayerRecord record, long sequence, boolean recoverable) {
+                    changes++;
+                    pendingWrites.put(record.uuid(), record);
+                    return extraSink == null || extraSink.submit(record, sequence, recoverable);
+                }
+
+                @Override
+                public boolean hasRoom() {
+                    return extraSink == null || extraSink.hasRoom();
                 }
             }, metrics, System::currentTimeMillis);
             for (int i = 0; i < count; i++) {
@@ -327,7 +333,17 @@ class EngineBenchmark {
         WriteQueue writer = new WriteQueue(database, new ScoreRepository(source.prefix()), metrics, logger,
                 50L, BATCH_SIZE, 5000);
 
-        Simulation simulation = new Simulation(200, writer::submit);
+        Simulation simulation = new Simulation(200, new ScoreEngine.Sink() {
+            @Override
+            public boolean submit(PlayerRecord record, long sequence, boolean recoverable) {
+                return writer.submit(record, sequence, recoverable);
+            }
+
+            @Override
+            public boolean hasRoom() {
+                return writer.hasRoom();
+            }
+        });
         long[] nanos = new long[MEASURED_TICKS];
         long wallStart = System.nanoTime();
         for (int i = 0; i < MEASURED_TICKS; i++) {
@@ -354,7 +370,7 @@ class EngineBenchmark {
                 metrics.writesMerged.sum(), metrics.writesDropped.sum(), metrics.databaseFailures.sum(),
                 metrics.rowsWritten.sum());
         long start = System.nanoTime();
-        int lost = writer.shutdown(2000L);
+        int lost = writer.shutdown(2000L).unconfirmed();
         System.out.printf(Locale.ROOT, "BENCH-OUTAGE | shutdown with the database still down returned in %d ms, "
                 + "%d update(s) left unwritten%n", (System.nanoTime() - start) / 1_000_000L, lost);
     }

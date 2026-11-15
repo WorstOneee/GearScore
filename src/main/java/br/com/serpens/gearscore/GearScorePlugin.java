@@ -20,6 +20,7 @@ import br.com.serpens.gearscore.score.RuleSet;
 import br.com.serpens.gearscore.score.Tier;
 import br.com.serpens.gearscore.storage.Database;
 import br.com.serpens.gearscore.storage.LookupService;
+import br.com.serpens.gearscore.storage.PendingSpool;
 import br.com.serpens.gearscore.storage.PoolFactory;
 import br.com.serpens.gearscore.storage.ScoreRepository;
 import br.com.serpens.gearscore.storage.WriteQueue;
@@ -58,6 +59,11 @@ public final class GearScorePlugin extends JavaPlugin {
     /** A tier rendered once per configuration load. */
     public record TierView(Component component, String plain, String legacy) {
     }
+
+    /** Owed results submitted again per second. */
+    private static final int RECOVERY_BATCH = 50;
+    /** Minimum time between rewrites of the pending-writes file while the database is down. */
+    private static final long SPOOL_INTERVAL_MILLIS = 30_000L;
 
     private final Metrics metrics = new Metrics();
     private final Set<UUID> online = new HashSet<>();
@@ -115,7 +121,9 @@ public final class GearScorePlugin extends JavaPlugin {
             if (settings.official()) {
                 this.writes = new WriteQueue(database, repository, metrics, getLogger(),
                         databaseSettings.flushIntervalMillis(), databaseSettings.batchSize(),
-                        databaseSettings.maxPendingWrites());
+                        databaseSettings.maxPendingWrites(),
+                        new PendingSpool(new File(getDataFolder(), "pending-writes.dat").toPath()),
+                        SPOOL_INTERVAL_MILLIS);
             }
         } else {
             getLogger().warning("Database disabled in database.yml: scores are kept in memory only.");
@@ -127,8 +135,22 @@ public final class GearScorePlugin extends JavaPlugin {
                 getLogger().info("Configured items not present in this version (ignored): "
                         + String.join(", ", snapshots.unknownMaterials()));
             }
-            this.engine = new ScoreEngine(rules, settings.serverName(), this::capture, this::persist, metrics,
-                    System::currentTimeMillis);
+            this.engine = new ScoreEngine(rules, settings.serverName(), this::capture, new ScoreEngine.Sink() {
+                @Override
+                public boolean submit(PlayerRecord record, long sequence, boolean recoverable) {
+                    return persist(record, sequence, recoverable);
+                }
+
+                @Override
+                public boolean hasRoom() {
+                    return writes == null || writes.hasRoom();
+                }
+            }, metrics, System::currentTimeMillis);
+            if (writes != null) {
+                writes.setListener(engine);
+                // Entries a previous run could not confirm; loaded off the server thread.
+                writes.recoverSpool();
+            }
             getServer().getPluginManager().registerEvents(new GearListener(this), this);
         } else if (lookups != null) {
             Database gate = database;
@@ -190,9 +212,15 @@ public final class GearScorePlugin extends JavaPlugin {
             }
         }
         if (writes != null) {
-            int lost = writes.shutdown(shutdownTimeoutMillis);
-            if (lost > 0) {
-                getLogger().warning(lost + " pending score update(s) could not be written before shutdown.");
+            if (engine != null) {
+                // Results the queue had refused: from here on nobody else will resend them.
+                engine.handOver();
+            }
+            WriteQueue.ShutdownResult result = writes.shutdown(shutdownTimeoutMillis);
+            if (result.unconfirmed() > 0) {
+                getLogger().warning(result.unconfirmed() + " score update(s) were not confirmed by the database "
+                        + "before shutdown; " + result.savedToDisk() + " saved to pending-writes.dat and will be "
+                        + "written on the next start.");
             }
         }
         if (lookups != null) {
@@ -346,10 +374,14 @@ public final class GearScorePlugin extends JavaPlugin {
         return snapshots.capture(player.getInventory());
     }
 
-    private void persist(PlayerRecord record) {
-        if (writes != null) {
-            writes.submit(record);
+    // Without a database there is nothing to wait for: the result counts as delivered.
+    private boolean persist(PlayerRecord record, long sequence, boolean recoverable) {
+        if (writes == null) {
+            return true;
         }
+        boolean accepted = writes.submit(record, sequence, recoverable);
+        ensureMaintenance();
+        return accepted;
     }
 
     /** Queues an evaluation for a tracked player. Constant time; safe to call from any event. */
@@ -439,7 +471,12 @@ public final class GearScorePlugin extends JavaPlugin {
     }
 
     private boolean needsMaintenance() {
-        return !online.isEmpty() && (remote != null || positionsEnabled);
+        if (online.isEmpty()) {
+            return false;
+        }
+        // On an official source the task only lives while a write is unconfirmed or owed.
+        return remote != null || positionsEnabled
+                || (writes != null && engine != null && (engine.hasOwed() || writes.pendingCount() > 0));
     }
 
     private void maintain() {
@@ -454,6 +491,11 @@ public final class GearScorePlugin extends JavaPlugin {
         }
         if (positionsEnabled) {
             lookups.refreshPositions(now);
+        }
+        if (engine != null && writes != null && engine.hasOwed()) {
+            // Results the write queue refused or dropped go back in, a few per second and only
+            // while there is room. They come from memory: no inventory is read again.
+            engine.recover(RECOVERY_BATCH);
         }
     }
 

@@ -32,6 +32,8 @@ public final class TestDatabase implements DataSource {
     public volatile boolean down;
     /** While down, how long a connection attempt hangs before failing. */
     public volatile long outageDelayMillis;
+    /** While up, how long a connection takes to be handed out (a slow database). */
+    public volatile long connectDelayMillis;
 
     public TestDatabase() {
         String unique = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
@@ -102,6 +104,14 @@ public final class TestDatabase implements DataSource {
                 }
             }
             throw new SQLException("simulated outage");
+        }
+        long slow = connectDelayMillis;
+        if (slow > 0) {
+            try {
+                Thread.sleep(slow);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
         connections.incrementAndGet();
         return delegate.getConnection();

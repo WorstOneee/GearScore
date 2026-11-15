@@ -2,7 +2,9 @@ package br.com.serpens.gearscore.storage;
 
 import br.com.serpens.gearscore.engine.Metrics;
 import br.com.serpens.gearscore.model.PlayerRecord;
+import br.com.serpens.gearscore.model.WriteListener;
 
+import java.io.IOException;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -13,9 +15,9 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
@@ -23,10 +25,29 @@ import java.util.logging.Logger;
  * Pending writes, consolidated by player: however many times a score changes before a
  * flush, only the latest state is written. One dedicated thread performs every write, in
  * batches. Nothing runs while the queue is empty.
+ *
+ * The queue never holds more than {@code maxPending} players and never loses a result
+ * silently. A result is reported back as confirmed only after its transaction commits.
+ * When the queue is full:
+ * <ul>
+ * <li>a result whose owner still holds it (an online player) is refused, and the owner
+ *     submits it again later;</li>
+ * <li>a result nobody else holds (a player who left, a shutdown hand-over) is let in by
+ *     giving up an entry that can be recovered, and its owner is told;</li>
+ * <li>only when every pending entry is unrecoverable is the oldest one lost; that is
+ *     counted and logged, and the player is evaluated again on their next join.</li>
+ * </ul>
+ * Unconfirmed entries are also kept in a small file while the database is down and at
+ * shutdown, so they survive a restart.
  */
 public final class WriteQueue {
 
-    private static final long DROP_LOG_INTERVAL_MILLIS = 60_000L;
+    private static final long LOST_LOG_INTERVAL_MILLIS = 60_000L;
+    /** How far from the oldest entry a recoverable one is looked for when making room. */
+    private static final int EVICTION_SCAN = 256;
+
+    private record Entry(PlayerRecord record, long sequence) {
+    }
 
     private final Database database;
     private final ScoreRepository repository;
@@ -35,16 +56,32 @@ public final class WriteQueue {
     private final long flushIntervalMillis;
     private final int batchSize;
     private final int maxPending;
+    private final PendingSpool spool;
+    private final long spoolIntervalMillis;
 
     private final Object lock = new Object();
-    private final LinkedHashMap<UUID, PlayerRecord> pending = new LinkedHashMap<>();
+    private final LinkedHashMap<UUID, Entry> pending = new LinkedHashMap<>();
     private final AtomicBoolean scheduled = new AtomicBoolean();
     private final ScheduledExecutorService executor;
+    private volatile WriteListener listener;
     private volatile boolean closed;
-    private long lastDropLogAt;
+    private long lastLostLogAt;
+    // Writer thread only.
+    private long lastSpoolAt;
+    private boolean spoolWritten;
 
     public WriteQueue(Database database, ScoreRepository repository, Metrics metrics, Logger logger,
                       long flushIntervalMillis, int batchSize, int maxPending) {
+        this(database, repository, metrics, logger, flushIntervalMillis, batchSize, maxPending, null, 30_000L);
+    }
+
+    /**
+     * @param spool               file for unconfirmed entries, or null to keep them in memory only
+     * @param spoolIntervalMillis minimum time between rewrites of that file during an outage
+     */
+    public WriteQueue(Database database, ScoreRepository repository, Metrics metrics, Logger logger,
+                      long flushIntervalMillis, int batchSize, int maxPending,
+                      PendingSpool spool, long spoolIntervalMillis) {
         this.database = database;
         this.repository = repository;
         this.metrics = metrics;
@@ -52,6 +89,9 @@ public final class WriteQueue {
         this.flushIntervalMillis = Math.max(50L, flushIntervalMillis);
         this.batchSize = Math.max(1, batchSize);
         this.maxPending = Math.max(this.batchSize, maxPending);
+        this.spool = spool;
+        this.spoolIntervalMillis = Math.max(0L, spoolIntervalMillis);
+        this.spoolWritten = spool != null && spool.exists();
         ScheduledThreadPoolExecutor pool = new ScheduledThreadPoolExecutor(1, runnable -> {
             Thread thread = new Thread(runnable, "GearScore-DB-Writer");
             thread.setDaemon(true);
@@ -63,22 +103,60 @@ public final class WriteQueue {
         this.executor = pool;
     }
 
-    /** Safe from any thread; never blocks on the database. */
+    public void setListener(WriteListener listener) {
+        this.listener = listener;
+    }
+
+    /** Hand-over of a result nobody else holds; see {@link #submit(PlayerRecord, long, boolean)}. */
     public void submit(PlayerRecord record) {
+        submit(record, 0L, false);
+    }
+
+    /**
+     * Safe from any thread; never blocks on the database or the disk.
+     *
+     * @param sequence    reported back through the listener when this result is confirmed or dropped
+     * @param recoverable true when the caller keeps the result and can submit it again
+     * @return false when the result was not accepted (queue full, or closed) and is still owed
+     */
+    public boolean submit(PlayerRecord record, long sequence, boolean recoverable) {
         if (closed) {
-            return;
+            return false;
         }
         synchronized (lock) {
-            if (pending.put(record.uuid(), record) != null) {
+            Entry current = pending.get(record.uuid());
+            if (current != null) {
+                // Consolidation never needs room, and never goes back in time.
+                if (!older(record, sequence, current)) {
+                    pending.put(record.uuid(), new Entry(record, sequence));
+                }
                 metrics.writesMerged.increment();
             } else {
-                metrics.writesQueued.increment();
-                if (pending.size() > maxPending) {
-                    dropOldest();
+                if (pending.size() >= maxPending) {
+                    if (recoverable) {
+                        metrics.writesRejected.increment();
+                        return false;
+                    }
+                    evictOne();
                 }
+                pending.put(record.uuid(), new Entry(record, sequence));
+                metrics.writesQueued.increment();
             }
         }
         schedule(flushIntervalMillis);
+        return true;
+    }
+
+    private static boolean older(PlayerRecord record, long sequence, Entry current) {
+        long difference = record.updatedAt() - current.record().updatedAt();
+        return difference < 0 || (difference == 0 && sequence < current.sequence());
+    }
+
+    /** Whether a result for a player not yet in the queue would be accepted. */
+    public boolean hasRoom() {
+        synchronized (lock) {
+            return pending.size() < maxPending;
+        }
     }
 
     public int pendingCount() {
@@ -87,16 +165,35 @@ public final class WriteQueue {
         }
     }
 
-    private void dropOldest() {
-        Iterator<UUID> oldest = pending.keySet().iterator();
-        oldest.next();
-        oldest.remove();
+    /**
+     * Frees one place. Prefers the oldest entry whose owner can submit it again; only when
+     * there is none nearby is the oldest entry given up for good. Called with the lock held.
+     */
+    private void evictOne() {
+        WriteListener owner = listener;
+        Iterator<Map.Entry<UUID, Entry>> iterator = pending.entrySet().iterator();
+        if (owner != null) {
+            for (int scanned = 0; scanned < EVICTION_SCAN && iterator.hasNext(); scanned++) {
+                Map.Entry<UUID, Entry> candidate = iterator.next();
+                if (owner.recoverable(candidate.getKey())) {
+                    iterator.remove();
+                    metrics.writesDropped.increment();
+                    owner.dropped(candidate.getKey(), candidate.getValue().sequence());
+                    return;
+                }
+            }
+            iterator = pending.entrySet().iterator();
+        }
+        iterator.next();
+        iterator.remove();
         metrics.writesDropped.increment();
+        metrics.writesLost.increment();
         long now = System.currentTimeMillis();
-        if (now - lastDropLogAt >= DROP_LOG_INTERVAL_MILLIS) {
-            lastDropLogAt = now;
-            logger.warning("Pending write limit reached (" + maxPending
-                    + "); the oldest updates are being discarded until the database recovers.");
+        if (now - lastLostLogAt >= LOST_LOG_INTERVAL_MILLIS) {
+            lastLostLogAt = now;
+            logger.warning("Pending write limit reached (" + maxPending + ") with no recoverable entry left; "
+                    + "the oldest updates are being discarded. Those players are evaluated again on their "
+                    + "next join.");
         }
     }
 
@@ -114,39 +211,56 @@ public final class WriteQueue {
     private void flushTask() {
         scheduled.set(false);
         if (!database.isAvailable()) {
+            spoolIfDue();
             schedule(Math.max(50L, database.retryInMillis()));
             return;
         }
         boolean ok = flushBatch();
         if (pendingCount() > 0) {
+            if (!ok) {
+                spoolIfDue();
+            }
             schedule(ok ? 0L : Math.max(50L, database.retryInMillis()));
+        } else if (ok) {
+            clearSpool();
         }
     }
 
     /** Writes one batch. On failure the rows go back, unless a newer state arrived meanwhile. */
     private boolean flushBatch() {
-        List<PlayerRecord> batch = takeBatch();
+        List<Entry> batch = takeBatch();
         if (batch.isEmpty()) {
             return true;
         }
+        List<PlayerRecord> records = new ArrayList<>(batch.size());
+        for (Entry entry : batch) {
+            records.add(entry.record());
+        }
         try {
             database.run(connection -> {
-                repository.upsert(connection, batch);
+                repository.upsert(connection, records);
                 return null;
             });
-            metrics.writeBatches.increment();
-            metrics.rowsWritten.add(batch.size());
-            return true;
         } catch (SQLException | RuntimeException e) {
             restore(batch);
             return false;
         }
+        metrics.writeBatches.increment();
+        metrics.rowsWritten.add(batch.size());
+        // Only now, with the transaction committed, is anything reported as persisted.
+        WriteListener owner = listener;
+        if (owner != null) {
+            for (Entry entry : batch) {
+                owner.confirmed(entry.record().uuid(), entry.sequence());
+            }
+        }
+        return true;
     }
 
-    private List<PlayerRecord> takeBatch() {
+    private List<Entry> takeBatch() {
         synchronized (lock) {
-            List<PlayerRecord> batch = new ArrayList<>(Math.min(batchSize, pending.size()));
-            Iterator<Map.Entry<UUID, PlayerRecord>> iterator = pending.entrySet().iterator();
+            List<Entry> batch = new ArrayList<>(Math.min(batchSize, pending.size()));
+            Iterator<Map.Entry<UUID, Entry>> iterator = pending.entrySet().iterator();
             while (iterator.hasNext() && batch.size() < batchSize) {
                 batch.add(iterator.next().getValue());
                 iterator.remove();
@@ -159,38 +273,145 @@ public final class WriteQueue {
      * Puts a failed batch back in front of what arrived meanwhile, never replacing a newer
      * state of the same player, and re-applies the memory limit.
      */
-    private void restore(List<PlayerRecord> batch) {
+    private void restore(List<Entry> batch) {
         synchronized (lock) {
-            LinkedHashMap<UUID, PlayerRecord> newer = new LinkedHashMap<>(pending);
+            LinkedHashMap<UUID, Entry> newer = new LinkedHashMap<>(pending);
             pending.clear();
-            for (PlayerRecord record : batch) {
-                if (!newer.containsKey(record.uuid())) {
-                    pending.put(record.uuid(), record);
+            for (Entry entry : batch) {
+                if (!newer.containsKey(entry.record().uuid())) {
+                    pending.put(entry.record().uuid(), entry);
                 }
             }
             pending.putAll(newer);
             while (pending.size() > maxPending) {
-                dropOldest();
+                evictOne();
             }
         }
     }
 
+    // ---- disk spool (writer thread only) -------------------------------------------------
+
+    private List<PlayerRecord> pendingRecords() {
+        synchronized (lock) {
+            List<PlayerRecord> records = new ArrayList<>(pending.size());
+            for (Entry entry : pending.values()) {
+                records.add(entry.record());
+            }
+            return records;
+        }
+    }
+
+    private void spoolIfDue() {
+        if (spool == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastSpoolAt >= spoolIntervalMillis) {
+            saveSpool();
+        }
+    }
+
+    /** @return number of records written, or -1 when nothing was written */
+    private int saveSpool() {
+        if (spool == null) {
+            return -1;
+        }
+        List<PlayerRecord> records = pendingRecords();
+        try {
+            if (records.isEmpty()) {
+                spool.delete();
+                spoolWritten = false;
+                return 0;
+            }
+            spool.save(records);
+            spoolWritten = true;
+            lastSpoolAt = System.currentTimeMillis();
+            metrics.spoolSaves.increment();
+            return records.size();
+        } catch (IOException e) {
+            metrics.spoolErrors.increment();
+            return -1;
+        }
+    }
+
+    private void clearSpool() {
+        if (spool == null || !spoolWritten) {
+            return;
+        }
+        try {
+            spool.delete();
+            spoolWritten = false;
+        } catch (IOException e) {
+            metrics.spoolErrors.increment();
+        }
+    }
+
+    /**
+     * Loads, on the writer thread, what a previous run left unconfirmed. A loaded record
+     * never replaces a pending one and is skipped when the queue is full.
+     */
+    public void recoverSpool() {
+        if (spool == null || closed) {
+            return;
+        }
+        try {
+            executor.execute(() -> {
+                List<PlayerRecord> records;
+                try {
+                    records = spool.load(maxPending);
+                } catch (IOException e) {
+                    metrics.spoolErrors.increment();
+                    return;
+                }
+                int loaded = 0;
+                synchronized (lock) {
+                    for (PlayerRecord record : records) {
+                        if (pending.size() >= maxPending) {
+                            break;
+                        }
+                        if (pending.putIfAbsent(record.uuid(), new Entry(record, 0L)) == null) {
+                            loaded++;
+                        }
+                    }
+                }
+                if (loaded > 0) {
+                    metrics.spoolRecovered.add(loaded);
+                    logger.info("Recovered " + loaded + " pending score update(s) left by the previous run.");
+                    schedule(0L);
+                } else if (records.isEmpty()) {
+                    clearSpool();
+                }
+            });
+        } catch (RuntimeException ignored) {
+            // executor already stopped
+        }
+    }
+
+    // ---- shutdown ------------------------------------------------------------------------
+
+    /** What {@link #shutdown(long)} achieved. */
+    public record ShutdownResult(int unconfirmed, int savedToDisk) {
+    }
+
     /**
      * Stops accepting writes and tries to persist what is pending, waiting at most
-     * {@code timeoutMillis}.
-     *
-     * @return number of updates that could not be written
+     * {@code timeoutMillis}. What is pending is first written to the spool file, so it
+     * survives even if the database does not answer in time.
      */
-    public int shutdown(long timeoutMillis) {
+    public ShutdownResult shutdown(long timeoutMillis) {
         closed = true;
         long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMillis);
+        int[] saved = {0};
         try {
             Future<?> lastFlush = executor.submit(() -> {
-                while (pendingCount() > 0 && System.currentTimeMillis() < deadline) {
+                saved[0] = Math.max(0, saveSpool());
+                while (pendingCount() > 0 && System.currentTimeMillis() < deadline && database.isAvailable()) {
                     if (!flushBatch()) {
                         break;
                     }
                 }
+                // Keep on disk exactly what is still unconfirmed.
+                saved[0] = Math.max(0, saveSpool());
             });
             lastFlush.get(Math.max(1L, timeoutMillis), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
@@ -199,6 +420,7 @@ public final class WriteQueue {
             // whatever is still pending is reported by the caller
         }
         executor.shutdownNow();
-        return pendingCount();
+        int unconfirmed = pendingCount();
+        return new ShutdownResult(unconfirmed, unconfirmed == 0 ? 0 : saved[0]);
     }
 }

@@ -6,7 +6,7 @@
 
   <groupId>br.com.serpens</groupId>
   <artifactId>GearScore</artifactId>
-  <version>3.0.0</version>
+  <version>3.0.1</version>
   <packaging>jar</packaging>
   <name>GearScore</name>
   <description>Equipment strength score for the Serpens network</description>

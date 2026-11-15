@@ -127,7 +127,7 @@ class StorageTest {
         Database first = source.open(metrics, 50L, 200L);
         WriteQueue writer = queue(first, 50L, 100, 1000);
         writer.submit(record(id, "Zwo", 1408, "newera", 111L));
-        assertEquals(0, writer.shutdown(5_000L));
+        assertEquals(0, writer.shutdown(5_000L).unconfirmed());
 
         // New pool, new services: what a server restart looks like to the plugin.
         Database second = source.open(new Metrics(), 50L, 200L);
@@ -241,7 +241,7 @@ class StorageTest {
         assertEquals(400, metrics.writesDropped.sum());
         // Shutdown must not hang while the database is unreachable.
         long start = System.nanoTime();
-        assertEquals(100, writer.shutdown(2_000L));
+        assertEquals(100, writer.shutdown(2_000L).unconfirmed());
         assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start) < 2_500L);
     }
 
@@ -541,7 +541,7 @@ class StorageTest {
         // New Era flushes the result of the quit evaluation.
         WriteQueue newEra = queue(origin, 50L, 100, 1000);
         newEra.submit(record(id, "Zwo", 1408, "newera", 500L));
-        assertEquals(0, newEra.shutdown(5_000L));
+        assertEquals(0, newEra.shutdown(5_000L).unconfirmed());
 
         // The recheck brings it in.
         assertEquals(1, hub.poll(5_000L));
@@ -552,7 +552,7 @@ class StorageTest {
         // A later change on New Era arrives with the periodic refresh.
         WriteQueue later = queue(origin, 50L, 100, 1000);
         later.submit(record(id, "Zwo", 1500, "newera", 900L));
-        assertEquals(0, later.shutdown(5_000L));
+        assertEquals(0, later.shutdown(5_000L).unconfirmed());
         assertEquals(1, hub.poll(35_000L));
         await(() -> hub.get(id).record().score() == 1500);
 
@@ -596,7 +596,7 @@ class StorageTest {
         // New Era, an official source, persists the score.
         WriteQueue newEra = queue(source.open(metrics, 50L, 200L), 50L, 100, 1000);
         newEra.submit(record(id, "Zwo", 1408, "newera", 500L));
-        assertEquals(0, newEra.shutdown(5_000L));
+        assertEquals(0, newEra.shutdown(5_000L).unconfirmed());
 
         // Hub and events run read-only: they are built without a write queue, so whatever
         // temporary kit the player wears there, the row stays as New Era left it.

@@ -315,10 +315,17 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
                     + database.consecutiveFailures() + " falha(s) seguidas)")
                     + "<gray>, falhas totais: <white>" + m.databaseFailures.sum());
             if (writes != null) {
-                line(sender, " <gray>Gravações: pendentes <white>" + writes.pendingCount()
+                line(sender, " <gray>Gravações: na fila <white>" + writes.pendingCount()
+                        + "<gray>, aguardando reenvio <white>" + (engine == null ? 0 : engine.owedCount())
                         + "<gray>, enfileiradas <white>" + m.writesQueued.sum()
-                        + "<gray>, consolidadas <white>" + m.writesMerged.sum()
-                        + "<gray>, descartadas <white>" + m.writesDropped.sum());
+                        + "<gray>, consolidadas <white>" + m.writesMerged.sum());
+                line(sender, " <gray>Fila cheia: recusadas <white>" + m.writesRejected.sum()
+                        + "<gray>, retiradas <white>" + m.writesDropped.sum()
+                        + "<gray>, reenviadas <white>" + m.writesRecovered.sum()
+                        + "<gray>, perdidas <white>" + m.writesLost.sum());
+                line(sender, " <gray>Arquivo de pendências: salvo <white>" + m.spoolSaves.sum()
+                        + "<gray> vez(es), recuperadas <white>" + m.spoolRecovered.sum()
+                        + "<gray>, erros <white>" + m.spoolErrors.sum());
                 line(sender, " <gray>Lotes enviados: <white>" + m.writeBatches.sum()
                         + "<gray>, linhas gravadas: <white>" + m.rowsWritten.sum());
             }

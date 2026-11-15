@@ -44,11 +44,20 @@ public final class ScoreRepository {
 
     public ScoreRepository(String prefix) {
         this.table = prefix + "players";
+        // A row is only replaced by a result at least as recent as the stored one, so a late
+        // retry, a restored batch or an entry replayed from the spool can never undo a newer
+        // write. updated_at is assigned last because the comparisons read its old value.
+        StringBuilder update = new StringBuilder();
+        for (String column : new String[]{"last_name", "score", "armor_score", "weapon_score", "tier",
+                "source_server", "rules_version", "updated_at"}) {
+            if (update.length() > 0) {
+                update.append(", ");
+            }
+            update.append(column).append(" = CASE WHEN VALUES(updated_at) >= updated_at THEN VALUES(")
+                    .append(column).append(") ELSE ").append(column).append(" END");
+        }
         this.upsert = "INSERT INTO " + table + " (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                + "ON DUPLICATE KEY UPDATE last_name = VALUES(last_name), score = VALUES(score), "
-                + "armor_score = VALUES(armor_score), weapon_score = VALUES(weapon_score), tier = VALUES(tier), "
-                + "source_server = VALUES(source_server), rules_version = VALUES(rules_version), "
-                + "updated_at = VALUES(updated_at)";
+                + "ON DUPLICATE KEY UPDATE " + update;
         this.byUuid = "SELECT " + COLUMNS + " FROM " + table + " WHERE uuid = ?";
         this.byName = "SELECT " + COLUMNS + " FROM " + table + " WHERE last_name = ? ORDER BY updated_at DESC LIMIT 1";
         this.top = "SELECT " + COLUMNS + " FROM " + table + " ORDER BY " + RANK_ORDER_SQL + " LIMIT ?";

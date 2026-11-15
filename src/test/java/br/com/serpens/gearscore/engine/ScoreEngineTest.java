@@ -30,7 +30,8 @@ class ScoreEngineTest {
 
     private final RuleSet rules = TestRules.defaults();
     private final Map<UUID, GearSnapshot> inventories = new HashMap<>();
-    private final List<PlayerRecord> written = new ArrayList<>();
+    private final RecordingSink sink = new RecordingSink();
+    private final List<PlayerRecord> written = sink.written;
     private final Metrics metrics = new Metrics();
     private final UUID player = UUID.randomUUID();
     private ScoreEngine engine;
@@ -39,7 +40,7 @@ class ScoreEngineTest {
 
     @BeforeEach
     void setUp() {
-        engine = new ScoreEngine(rules, "newera", inventories::get, written::add, metrics, () -> clock);
+        engine = new ScoreEngine(rules, "newera", inventories::get, sink, metrics, () -> clock);
         engine.track(player, "Zwo");
     }
 
@@ -373,6 +374,207 @@ class ScoreEngineTest {
         assertEquals(0, engine.trackedCount());
         assertEquals(0, metrics.evaluations.sum());
         assertTrue(written.isEmpty());
+    }
+
+    // ---- calculated, queued, confirmed ---------------------------------------------------
+
+    @Test
+    void aRefusedResultIsOwedAndSentAgainWithoutAnyNewEvent() {
+        inventories.put(player, netherite("netherite_sword"));
+        sink.full = true;
+        engine.evaluateNow(player);
+        assertTrue(written.isEmpty());
+        assertEquals(1, engine.owedCount());
+
+        // Same equipment evaluated again: nothing to recalculate, and still nothing sent.
+        engine.evaluateNow(player);
+        assertEquals(1, metrics.evaluations.sum());
+        assertEquals(0, engine.recover(10), "no room yet");
+        assertEquals(1, engine.owedCount());
+
+        // Room appears: the stored result goes out; the inventory is not read again.
+        long capturesBefore = metrics.captures.sum();
+        sink.full = false;
+        assertEquals(1, engine.recover(10));
+        assertEquals(1, written.size());
+        assertEquals(1100, written.get(0).score());
+        assertEquals(capturesBefore, metrics.captures.sum());
+        assertFalse(engine.hasOwed());
+        assertEquals(0, engine.recover(10));
+        assertEquals(1, written.size());
+    }
+
+    @Test
+    void aDroppedResultIsSentAgain() {
+        inventories.put(player, netherite("netherite_sword"));
+        engine.evaluateNow(player);
+        long sequence = sink.lastSequence();
+        assertFalse(engine.hasOwed());
+
+        // The queue gave the entry up to make room for someone else.
+        engine.dropped(player, sequence);
+        assertEquals(1, engine.owedCount());
+        engine.dropped(player, sequence);
+        assertEquals(1, engine.owedCount(), "one place per player, however many notices arrive");
+        assertEquals(1, engine.recover(10));
+        assertEquals(2, written.size());
+        assertEquals(written.get(0), written.get(1));
+        assertEquals(1, metrics.writesRecovered.sum());
+    }
+
+    @Test
+    void aConfirmedResultIsNeverSentAgain() {
+        inventories.put(player, netherite("netherite_sword"));
+        engine.evaluateNow(player);
+        engine.confirmed(player, sink.lastSequence());
+        // A stale drop notice for an older submission must not reopen it.
+        engine.dropped(player, sink.lastSequence() - 1);
+        assertEquals(0, engine.recover(10));
+        for (int i = 0; i < 5; i++) {
+            engine.request(player, tick, DEBOUNCE);
+            advance(DEBOUNCE);
+        }
+        assertEquals(1, written.size());
+        assertFalse(engine.hasOwed());
+    }
+
+    @Test
+    void anOldConfirmationDoesNotConfirmANewerResult() {
+        inventories.put(player, netherite("netherite_sword"));
+        engine.evaluateNow(player);
+        long first = sink.lastSequence();
+
+        // A newer result is refused while the first one is still being written.
+        inventories.put(player, netherite("iron_sword"));
+        sink.full = true;
+        engine.evaluateNow(player);
+        assertEquals(1, engine.owedCount());
+
+        // The write of the first one now commits.
+        engine.confirmed(player, first);
+        assertTrue(engine.hasOwed(), "the newer result is still owed");
+        sink.full = false;
+        assertEquals(1, engine.recover(10));
+        assertEquals(2, written.size());
+        assertEquals(1065, written.get(1).score());
+        long second = sink.lastSequence();
+        assertTrue(second > first);
+
+        // Confirmations arriving out of order change nothing.
+        engine.confirmed(player, second);
+        engine.confirmed(player, first);
+        engine.dropped(player, first);
+        assertEquals(0, engine.recover(10));
+        assertEquals(2, written.size());
+    }
+
+    @Test
+    void callbacksOfAnEarlierSessionDoNotTouchTheNewOne() {
+        inventories.put(player, netherite("netherite_sword"));
+        engine.evaluateNow(player);
+        long oldSequence = sink.lastSequence();
+
+        // Quit and reconnect while that write is still in flight.
+        engine.forget(player);
+        engine.track(player, "Zwo");
+        sink.full = true;
+        engine.evaluateNow(player);
+        assertEquals(1, engine.owedCount());
+
+        // The old session's write commits, then is reported dropped by a late notice.
+        engine.confirmed(player, oldSequence);
+        assertTrue(engine.hasOwed());
+        engine.dropped(player, oldSequence);
+        sink.full = false;
+        assertEquals(1, engine.recover(10));
+        assertEquals(2, written.size());
+        assertTrue(sink.lastSequence() > oldSequence);
+
+        // Notices for a player who is gone are ignored.
+        engine.forget(player);
+        engine.dropped(player, sink.lastSequence());
+        engine.confirmed(player, sink.lastSequence());
+        assertFalse(engine.hasOwed() && engine.recover(10) > 0);
+        assertFalse(engine.recoverable(player));
+    }
+
+    @Test
+    void anOwedResultIsHandedOverForGoodWhenThePlayerLeaves() {
+        inventories.put(player, netherite("netherite_sword"));
+        sink.full = true;
+        engine.evaluateNow(player);
+        assertTrue(written.isEmpty());
+
+        engine.forget(player);
+        assertEquals(1, sink.finalHandOvers.size());
+        assertEquals(1100, sink.finalHandOvers.get(0).score());
+        assertEquals(0, engine.recover(10));
+    }
+
+    @Test
+    void aQueuedOrConfirmedResultIsNotHandedOverAgainOnQuit() {
+        inventories.put(player, netherite("netherite_sword"));
+        engine.evaluateNow(player);
+        engine.forget(player);
+        assertEquals(1, written.size());
+        assertTrue(sink.finalHandOvers.isEmpty());
+    }
+
+    @Test
+    void recoveryIsBoundedAndFairToEveryPlayer() {
+        List<UUID> players = new ArrayList<>();
+        sink.full = true;
+        for (int i = 0; i < 30; i++) {
+            UUID id = new UUID(5L, i);
+            players.add(id);
+            engine.track(id, "P" + i);
+            inventories.put(id, netherite("netherite_sword"));
+            engine.evaluateNow(id);
+        }
+        assertEquals(30, engine.owedCount());
+
+        // One player keeps changing equipment the whole time.
+        UUID busy = players.get(0);
+        sink.full = false;
+        int rounds = 0;
+        while (engine.hasOwed()) {
+            inventories.put(busy, netherite(rounds % 2 == 0 ? "iron_sword" : "netherite_sword"));
+            engine.evaluateNow(busy);
+            assertTrue(engine.recover(10) <= 10, "at most the batch per call");
+            assertTrue(engine.owedCount() <= 30);
+            assertTrue(++rounds < 20);
+        }
+        // Everyone got through in order, in a handful of rounds.
+        assertTrue(rounds <= 4, "rounds=" + rounds);
+        for (UUID id : players) {
+            assertTrue(written.stream().anyMatch(record -> record.uuid().equals(id)), id.toString());
+        }
+    }
+
+    @Test
+    void shutdownHandsOverWhatIsStillOwed() {
+        sink.full = true;
+        for (int i = 0; i < 3; i++) {
+            UUID id = new UUID(6L, i);
+            engine.track(id, "P" + i);
+            inventories.put(id, netherite("netherite_sword"));
+            engine.evaluateNow(id);
+        }
+        assertEquals(3, engine.handOver());
+        assertEquals(3, sink.finalHandOvers.size());
+        assertEquals(0, engine.handOver());
+        assertFalse(engine.hasOwed());
+    }
+
+    @Test
+    void aNewResultIsNeverOlderThanTheOneItReplaces() {
+        inventories.put(player, netherite("netherite_sword"));
+        engine.evaluateNow(player);
+        // The clock stands still, or even goes back.
+        clock -= 500L;
+        inventories.put(player, netherite("iron_sword"));
+        engine.evaluateNow(player);
+        assertTrue(written.get(1).updatedAt() > written.get(0).updatedAt());
     }
 
     @Test
