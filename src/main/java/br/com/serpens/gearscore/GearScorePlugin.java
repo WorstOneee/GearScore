@@ -83,8 +83,9 @@ public final class GearScorePlugin extends JavaPlugin {
         saveDefaultConfig();
         saveIfMissing("database.yml");
         saveIfMissing("messages.yml");
-        updateFile("config.yml", List.of("legacy/config-1.0.yml", "legacy/config-1.1.yml"), true);
-        updateFile("messages.yml", List.of("legacy/messages-1.1.yml"), false);
+        updateFile("config.yml",
+                List.of("legacy/config-1.0.yml", "legacy/config-1.1.yml", "legacy/config-2.0.yml"), true);
+        updateFile("messages.yml", List.of("legacy/messages-1.1.yml", "legacy/messages-2.0.yml"), false);
         reloadConfig();
 
         DatabaseSettings databaseSettings;
@@ -222,7 +223,7 @@ public final class GearScorePlugin extends JavaPlugin {
                 loaded.maxPerTick(), loaded.ignoredWorlds(), loaded.pageSize(), current.maxEntries(),
                 current.topCacheMillis(), current.positionRefreshMillis(), loaded.fallback(),
                 current.remoteIntervalMillis(), current.remoteRecheckMillis(), current.remoteBatchSize(),
-                current.remoteMaxBatches(), loaded.detailsMaxItems());
+                current.remoteMaxBatches());
         this.messages = loadedMessages;
         this.rules = parsed;
         this.tierViews = renderTiers(parsed);

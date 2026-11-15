@@ -32,105 +32,190 @@ class ScoreCalculatorTest {
         return calculator.score(item(rules, material, enchant, level)).enchant();
     }
 
-    // ---- whole inventory -----------------------------------------------------------------
+    // ---- best set ------------------------------------------------------------------------
+
+    private static String material(ScoreResult result, int place) {
+        ItemScore piece = result.piece(place);
+        return piece == null ? null : piece.item().def().material();
+    }
 
     @Test
     void emptyInventoryScoresZero() {
         ScoreResult result = calculator.calculate(GearSnapshot.EMPTY);
         assertEquals(0, result.total());
-        assertEquals(0, result.itemCount());
+        for (int place = 0; place < ScoreResult.SET_SIZE; place++) {
+            assertNull(result.piece(place));
+        }
         assertEquals("iniciante", result.tier().id());
     }
 
     @Test
-    void everyValidItemIsSummed() {
+    void scoreIsTheFourBestArmorPiecesPlusTheBestWeapon() {
         ScoreResult result = calculator.calculate(gear(
                 armorSet(rules, "netherite", "protection", 4, "unbreaking", 3, "mending", 1),
-                item(rules, "netherite_sword", "sharpness", 5, "fire_aspect", 2),
-                item(rules, "netherite_axe", "sharpness", 5),
-                item(rules, "bow", "power", 5),
-                item(rules, "mace", "density", 5)));
+                item(rules, "netherite_sword", "sharpness", 5, "fire_aspect", 2)));
         assertEquals(265, result.armorBase());
         assertEquals(4 * (150 + 15 + 12), result.armorEnchant());
-        assertEquals(80 + 76 + 50 + 110, result.weaponBase());
-        assertEquals((155 + 45) + 155 + 120 + 170, result.weaponEnchant());
+        assertEquals(80, result.weaponBase());
+        assertEquals(155 + 45, result.weaponEnchant());
         assertEquals(result.armorBase() + result.armorEnchant() + result.weaponBase() + result.weaponEnchant(),
                 result.total());
-        assertEquals(4, result.armorCount());
-        assertEquals(4, result.weaponCount());
-        assertEquals(8, result.itemCount());
+        assertEquals("netherite_helmet", material(result, 0));
+        assertEquals("netherite_chestplate", material(result, 1));
+        assertEquals("netherite_leggings", material(result, 2));
+        assertEquals("netherite_boots", material(result, 3));
+        assertEquals("netherite_sword", material(result, ScoreResult.WEAPON));
+        assertEquals(5, result.candidates());
     }
 
     @Test
-    void equalItemsInDifferentSlotsEachContribute() {
+    void bestSetIsAssembledFromWornAndCarriedItems() {
+        // Wearing plain iron while the good pieces sit in the inventory: the snapshot does
+        // not say which is which, and the best of each slot is taken wherever it is.
+        ItemSnapshot[] worn = armorSet(rules, "iron");
+        ScoreResult result = calculator.calculate(gear(worn,
+                item(rules, "netherite_helmet", "protection", 4),
+                item(rules, "diamond_chestplate", "protection", 4),
+                item(rules, "netherite_boots", "protection", 4, "feather_falling", 4),
+                item(rules, "iron_sword"),
+                item(rules, "mace", "density", 5)));
+        assertEquals("netherite_helmet", material(result, 0));
+        assertEquals("diamond_chestplate", material(result, 1));
+        assertEquals("iron_leggings", material(result, 2));
+        assertEquals("netherite_boots", material(result, 3));
+        assertEquals("mace", material(result, ScoreResult.WEAPON));
+        assertEquals((55 + 150) + (75 + 150) + 42 + (45 + 150 + 40) + (110 + 170), result.total());
+    }
+
+    @Test
+    void selectionUsesTheFullScoreNotTheMaterialOrTheNumberOfEnchantments() {
+        // Better material loses to a better total.
+        ScoreResult byTotal = calculator.calculate(carrying(
+                item(rules, "netherite_chestplate"),
+                item(rules, "diamond_chestplate", "protection", 4)));
+        assertEquals("diamond_chestplate", material(byTotal, 1));
+        assertEquals(75 + 150, byTotal.total());
+
+        // More enchantments lose to one strong enchantment.
+        ItemSnapshot many = item(rules, "diamond_sword", "smite", 5, "looting", 3, "unbreaking", 3, "mending", 1,
+                "knockback", 2);
+        ItemSnapshot one = item(rules, "diamond_sword", "sharpness", 5);
+        ScoreResult weapons = calculator.calculate(carrying(many, one));
+        assertEquals(one, weapons.weapon().item());
+        assertEquals(65 + 155, weapons.total());
+        assertTrue(calculator.score(many).total() < calculator.score(one).total());
+
+        // A weaker material with the right enchantment beats a plain stronger one.
+        ScoreResult boots = calculator.calculate(carrying(
+                item(rules, "netherite_boots"),
+                item(rules, "iron_boots", "protection", 4, "feather_falling", 4)));
+        assertEquals("iron_boots", material(boots, 3));
+    }
+
+    @Test
+    void theBestWeaponIsChosenAcrossAllWeaponTypes() {
+        ScoreResult result = calculator.calculate(carrying(
+                item(rules, "netherite_sword", "sharpness", 3),
+                item(rules, "bow", "power", 5),
+                item(rules, "netherite_axe", "sharpness", 5),
+                item(rules, "crossbow", "quick_charge", 3),
+                item(rules, "trident", "loyalty", 3)));
+        assertEquals("netherite_axe", material(result, ScoreResult.WEAPON));
+        assertEquals(76 + 155, result.total());
+        assertEquals(result.weaponScore(), result.total());
+    }
+
+    @Test
+    void severalWeaponsDoNotAddUp() {
         ItemSnapshot sword = item(rules, "netherite_sword", "sharpness", 5);
         int one = total(carrying(sword));
         assertEquals(80 + 155, one);
-        assertEquals(2 * one, total(carrying(sword, item(rules, "netherite_sword", "sharpness", 5))));
-        ItemSnapshot[] nine = new ItemSnapshot[9];
-        for (int i = 0; i < 9; i++) {
-            nine[i] = item(rules, "netherite_sword", "sharpness", 5);
+        ItemSnapshot[] ten = new ItemSnapshot[10];
+        for (int i = 0; i < 10; i++) {
+            ten[i] = item(rules, "netherite_sword", "sharpness", 5);
         }
-        assertEquals(9 * one, total(carrying(nine)));
+        assertEquals(one, total(carrying(ten)));
+        // Adding weaker weapons of other types changes nothing either.
+        assertEquals(one, total(carrying(sword, item(rules, "bow", "power", 5), item(rules, "mace"),
+                item(rules, "diamond_axe", "sharpness", 4), item(rules, "trident"))));
     }
 
     @Test
-    void eachSlotIsCountedExactlyOnce() {
-        // The snapshot holds one entry per occupied slot; the calculator adds each entry once.
-        GearSnapshot snapshot = gear(armorSet(rules, "diamond"), item(rules, "diamond_sword"));
-        ScoreResult result = calculator.calculate(snapshot);
-        assertEquals(snapshot.size(), result.itemCount());
-        double sum = 0;
-        for (int i = 0; i < result.itemCount(); i++) {
-            sum += result.item(i).total();
+    void repeatedArmorDoesNotAddUp() {
+        ItemSnapshot[] set = armorSet(rules, "netherite", "protection", 4);
+        int worn = total(gear(set));
+        // A second identical set and a weaker spare set in the inventory.
+        assertEquals(worn, total(gear(set, armorSet(rules, "netherite", "protection", 4))));
+        assertEquals(worn, total(gear(set, armorSet(rules, "diamond", "protection", 3))));
+        ItemSnapshot[] helmets = new ItemSnapshot[20];
+        for (int i = 0; i < 20; i++) {
+            helmets[i] = item(rules, "netherite_helmet", "protection", 4);
         }
-        assertEquals(220 + 65, result.total());
-        assertEquals(result.total(), sum);
+        assertEquals(55 + 150, total(carrying(helmets)));
     }
 
     @Test
-    void armorCarriedInTheInventoryAlsoScores() {
-        int worn = total(gear(armorSet(rules, "netherite", "protection", 4)));
-        int withSpare = total(gear(armorSet(rules, "netherite", "protection", 4),
-                item(rules, "netherite_chestplate", "protection", 4),
-                item(rules, "diamond_helmet")));
-        assertEquals(worn + (90 + 150) + 45, withSpare);
+    void theHeldItemIsNotCountedTwice() {
+        // The main hand is a hotbar slot, so the held sword is one entry in the snapshot.
+        // Even if it were read twice, a second copy cannot change a best-of selection.
+        ItemSnapshot held = item(rules, "netherite_sword", "sharpness", 5);
+        assertEquals(total(carrying(held)), total(carrying(held, held)));
+        assertEquals(1, carrying(held).size());
     }
 
     @Test
-    void removingAnItemLowersTheScoreByThatItem() {
+    void removingTheBestPieceFallsBackToTheNextBest() {
         ItemSnapshot[] armor = armorSet(rules, "netherite", "protection", 4);
-        ItemSnapshot sword = item(rules, "netherite_sword", "sharpness", 5);
-        int full = total(gear(armor, sword));
-        assertEquals(full - (80 + 155), total(gear(armor)));
+        ItemSnapshot best = item(rules, "netherite_sword", "sharpness", 5);
+        ItemSnapshot second = item(rules, "diamond_sword", "sharpness", 3);
+        int full = total(gear(armor, best, second));
+        assertEquals(865 + 235, full);
+        // The best weapon is dropped: the second one takes its place.
+        assertEquals(865 + (65 + 80), total(gear(armor, second)));
+        // No weapon left at all.
+        assertEquals(865, total(gear(armor)));
+        // The chestplate breaks and there is no spare.
         armor[1] = null;
-        assertEquals(full - (90 + 150), total(gear(armor, sword)));
+        assertEquals(full - (90 + 150), total(gear(armor, best, second)));
+        // With a spare chestplate carried, that one is used instead.
+        assertEquals(full - (90 + 150) + 75, total(gear(armor, best, second, item(rules, "diamond_chestplate"))));
     }
 
     @Test
-    void itemsAreListedFromHighestToLowest() {
-        ScoreResult result = calculator.calculate(carrying(
-                item(rules, "wooden_sword"),
-                item(rules, "netherite_chestplate", "protection", 4),
-                item(rules, "bow", "power", 5)));
-        assertEquals("netherite_chestplate", result.item(0).item().def().material());
-        assertEquals("bow", result.item(1).item().def().material());
-        assertEquals("wooden_sword", result.item(2).item().def().material());
+    void removingAnUnselectedItemChangesNothing() {
+        ItemSnapshot[] armor = armorSet(rules, "netherite", "protection", 4);
+        ItemSnapshot best = item(rules, "netherite_sword", "sharpness", 5);
+        assertEquals(total(gear(armor, best, item(rules, "iron_sword"), item(rules, "leather_helmet"))),
+                total(gear(armor, best)));
     }
 
     @Test
-    void snapshotIgnoresWhereItemsSitButNotWhatTheyAre() {
+    void reorganisingTheInventoryKeepsTheResult() {
         ItemSnapshot sword = item(rules, "netherite_sword", "sharpness", 5);
         ItemSnapshot bow = item(rules, "bow", "power", 5);
         ItemSnapshot helmet = item(rules, "diamond_helmet", "protection", 4);
+        ItemSnapshot spare = item(rules, "iron_helmet");
         // Same items read in another slot order: same signature, nothing to recalculate.
-        assertEquals(carrying(sword, bow, helmet), carrying(helmet, sword, bow));
+        assertEquals(carrying(sword, bow, helmet, spare), carrying(spare, helmet, sword, bow));
         assertEquals(carrying(sword, bow, helmet).hashCode(), carrying(bow, helmet, sword).hashCode());
+        assertEquals(total(carrying(sword, bow, helmet, spare)), total(carrying(bow, spare, helmet, sword)));
         // A different composition is a different signature.
         assertNotEquals(carrying(sword, bow), carrying(sword, bow, helmet));
-        assertNotEquals(carrying(sword, bow), carrying(sword, sword));
         assertNotEquals(carrying(sword), carrying(item(rules, "netherite_sword", "sharpness", 4)));
-        assertNotEquals(carrying(sword), carrying(item(rules, "netherite_sword", "sharpness", 5, "mending", 1)));
+    }
+
+    @Test
+    void tiesAreBrokenTheSameWayWhateverTheOrder() {
+        // Two different weapons with the same total.
+        ItemSnapshot a = item(rules, "diamond_sword", "sharpness", 1);
+        RuleSet tied = TestRules.with(config -> config.set("weapons.axe.diamond", 65));
+        ItemSnapshot sword = item(tied, "diamond_sword", "sharpness", 1);
+        ItemSnapshot axe = item(tied, "diamond_axe", "sharpness", 1);
+        ScoreCalculator calc = new ScoreCalculator(tied);
+        assertEquals(calc.score(sword).total(), calc.score(axe).total());
+        assertEquals(calc.calculate(carrying(sword, axe)).weapon().item(),
+                calc.calculate(carrying(axe, sword)).weapon().item());
+        assertEquals(65 + 25, total(carrying(a)));
     }
 
     @Test
@@ -146,6 +231,13 @@ class ScoreCalculatorTest {
         }
         assertEquals(GearType.CHESTPLATE, rules.gear().get("elytra").type());
         assertEquals(GearType.HELMET, rules.gear().get("turtle_helmet").type());
+        // An elytra (base 0) never displaces a real chestplate.
+        ScoreResult result = calculator.calculate(carrying(item(rules, "elytra", "unbreaking", 3, "mending", 1),
+                item(rules, "leather_chestplate")));
+        assertEquals("elytra", material(result, 1));
+        assertEquals(27, result.total());
+        assertEquals("iron_chestplate", material(calculator.calculate(carrying(
+                item(rules, "elytra", "unbreaking", 3, "mending", 1), item(rules, "iron_chestplate"))), 1));
     }
 
     // ---- enchantments: levels, weights, applicability ------------------------------------
@@ -410,13 +502,14 @@ class ScoreCalculatorTest {
         assertEquals(135.0, single.base());
         assertEquals(172.5, single.enchant(), 1e-9);
 
-        // Three of them: the fractional points are added first and rounded at the end.
+        // A whole set: the fractional points of the four pieces are added first and rounded
+        // once (3 x 172.5 = 517.5, not 3 x 173).
         ScoreResult result = calc.calculate(carrying(chest,
-                item(tuned, "netherite_chestplate", "protection", 4, "mending", 1, "unbreaking", 3),
-                item(tuned, "netherite_chestplate", "protection", 4, "mending", 1, "unbreaking", 3)));
-        assertEquals(405, result.armorBase());
+                item(tuned, "netherite_helmet", "protection", 4),
+                item(tuned, "netherite_boots", "protection", 4)));
+        assertEquals(135 + 55 + 45, result.armorBase());
         assertEquals(518, result.armorEnchant());
-        assertEquals(923, result.total());
+        assertEquals(235 + 518, result.total());
     }
 
     @Test
@@ -445,19 +538,23 @@ class ScoreCalculatorTest {
         assertEquals(80 + 155.0, calc.score(plain).total());
         assertEquals((120 + 80 + 155) * 1.5, calc.score(special).total());
         assertNotEquals(plain, special);
-        assertEquals((int) Math.round(235 + 532.5), calc.calculate(carrying(plain, special)).total());
+        // The custom sword wins the weapon place; the plain one adds nothing.
+        ScoreResult both = calc.calculate(carrying(plain, special));
+        assertEquals(special, both.weapon().item());
+        assertEquals(300, both.weaponBase());
+        assertEquals(233, both.weaponEnchant());
     }
 
     @Test
     void tiersFollowTheConfiguredBands() {
-        assertEquals(2, rules.version());
+        assertEquals(3, rules.version());
         assertEquals("iniciante", rules.tierFor(0).id());
-        assertEquals("aprendiz", rules.tierFor(300).id());
-        assertEquals("guerreiro", rules.tierFor(1199).id());
-        assertEquals("veterano", rules.tierFor(1200).id());
-        assertEquals("elite", rules.tierFor(1800).id());
-        assertEquals("lendario", rules.tierFor(2400).id());
-        assertEquals("mitico", rules.tierFor(9000).id());
+        assertEquals("aprendiz", rules.tierFor(150).id());
+        assertEquals("guerreiro", rules.tierFor(599).id());
+        assertEquals("veterano", rules.tierFor(600).id());
+        assertEquals("elite", rules.tierFor(1125).id());
+        assertEquals("lendario", rules.tierFor(1200).id());
+        assertEquals("mitico", rules.tierFor(5000).id());
     }
 
     // ---- worked examples for the documentation -------------------------------------------
@@ -514,19 +611,24 @@ class ScoreCalculatorTest {
         // Whole inventories.
         print("Ferro completo sem encantamentos + espada de ferro",
                 gear(armorSet(rules, "iron"), item(rules, "iron_sword")));
+        print("Diamante Protecao II + espada de diamante Afiacao II",
+                gear(armorSet(rules, "diamond", "protection", 2), item(rules, "diamond_sword", "sharpness", 2)));
         print("Diamante Protecao IV + espada de diamante Afiacao V",
                 gear(armorSet(rules, "diamond", "protection", 4), item(rules, "diamond_sword", "sharpness", 5)));
-        print("Netherita completa encantada, sem armas", gear(best));
+        print("Netherita Protecao IV/Inq III/Remendo + espada de netherita sem encantamentos",
+                gear(armorSet(rules, "netherite", full), item(rules, "netherite_sword")));
         print("Netherita completa encantada + espada completa", gear(best, sword));
-        print("Netherita completa encantada + espada, machado e arco", gear(best, sword, axe, bow));
-        print("Netherita completa encantada + espada, machado, arco, besta, mace e tridente",
-                gear(best, sword, axe, bow, crossbow, mace, trident));
-        print("O anterior + segunda armadura de netherita Protecao IV no inventario",
+        print("O mesmo, carregando tambem machado, arco, besta e tridente",
+                gear(best, sword, axe, bow, crossbow, trident));
+        print("O mesmo, carregando tambem a mace Densidade V", gear(best, sword, axe, bow, crossbow, trident, mace));
+        print("O anterior + segunda armadura de netherita Protecao IV guardada",
                 gear(best, sword, axe, bow, crossbow, mace, trident,
                         item(rules, "netherite_helmet", "protection", 4),
                         item(rules, "netherite_chestplate", "protection", 4),
                         item(rules, "netherite_leggings", "protection", 4),
                         item(rules, "netherite_boots", "protection", 4)));
+        print("Ferro vestido, netherita encantada guardada + espada completa",
+                gear(armorSet(rules, "iron"), best[0], best[1], best[2], best[3], sword));
     }
 
     private void piece(String label, ItemSnapshot item) {
@@ -536,7 +638,7 @@ class ScoreCalculatorTest {
 
     private void print(String label, GearSnapshot snapshot) {
         ScoreResult r = calculator.calculate(snapshot);
-        System.out.printf("EXAMPLE | %s | %d | %d | %d | %d | %d | %s%n", label, r.armorScore(), r.weaponScore(),
-                r.armorCount(), r.weaponCount(), r.total(), r.tier().id());
+        System.out.printf("EXAMPLE | %s | %d | %d | %s | %d | %s%n", label, r.armorScore(), r.weaponScore(),
+                r.weapon() == null ? "-" : r.weapon().item().def().material(), r.total(), r.tier().id());
     }
 }

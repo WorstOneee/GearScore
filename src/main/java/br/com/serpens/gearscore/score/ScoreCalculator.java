@@ -4,8 +4,6 @@ import br.com.serpens.gearscore.score.ScoreResult.EnchantScore;
 import br.com.serpens.gearscore.score.ScoreResult.EnchantStatus;
 import br.com.serpens.gearscore.score.ScoreResult.ItemScore;
 
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Map;
 import java.util.Set;
 
@@ -16,10 +14,6 @@ import java.util.Set;
 public final class ScoreCalculator {
 
     private static final EnchantScore[] NO_ENCHANTS = new EnchantScore[0];
-    private static final Comparator<ItemScore> BY_SCORE = (a, b) -> {
-        int order = Double.compare(b.total(), a.total());
-        return order != 0 ? order : a.item().compareTo(b.item());
-    };
 
     private final RuleSet rules;
 
@@ -31,33 +25,39 @@ public final class ScoreCalculator {
         return rules;
     }
 
+    /**
+     * Picks the best helmet, chestplate, leggings, boots and weapon among everything the
+     * player carries, each by its full score (material, enchantments, custom rule), and adds
+     * those five. Other items of the same slot, and every other weapon, add nothing, so
+     * carrying duplicates or spare gear cannot raise the result.
+     */
     public ScoreResult calculate(GearSnapshot snapshot) {
+        ItemScore[] best = new ItemScore[ScoreResult.SET_SIZE];
         int count = snapshot.size();
-        ItemScore[] items = new ItemScore[count];
-        double armorBase = 0.0;
-        double armorEnchant = 0.0;
-        double weaponBase = 0.0;
-        double weaponEnchant = 0.0;
-        int armorCount = 0;
-        // One entry per occupied slot, so each item is counted exactly once and equal items
-        // in different slots each contribute.
         for (int i = 0; i < count; i++) {
             ItemScore score = score(snapshot.item(i));
-            items[i] = score;
-            if (score.item().def().type().isArmor()) {
-                armorBase += score.base();
-                armorEnchant += score.enchant();
-                armorCount++;
-            } else {
-                weaponBase += score.base();
-                weaponEnchant += score.enchant();
+            GearType type = score.item().def().type();
+            // Armor slot types are the first four enum constants; every weapon type
+            // competes for the single weapon place.
+            int place = type.isArmor() ? type.ordinal() : ScoreResult.WEAPON;
+            // Strictly greater: on a tie the first in the snapshot's canonical order stays,
+            // so the choice does not depend on where items sit.
+            if (best[place] == null || score.total() > best[place].total()) {
+                best[place] = score;
             }
         }
-        if (count > 1) {
-            Arrays.sort(items, BY_SCORE);
+        double armorBase = 0.0;
+        double armorEnchant = 0.0;
+        for (int place = 0; place < ScoreResult.WEAPON; place++) {
+            if (best[place] != null) {
+                armorBase += best[place].base();
+                armorEnchant += best[place].enchant();
+            }
         }
-        return new ScoreResult(round(armorBase), round(armorEnchant), round(weaponBase), round(weaponEnchant),
-                armorCount, count - armorCount, items, rules);
+        ItemScore weapon = best[ScoreResult.WEAPON];
+        return new ScoreResult(round(armorBase), round(armorEnchant),
+                weapon == null ? 0 : round(weapon.base()), weapon == null ? 0 : round(weapon.enchant()),
+                best, count, rules);
     }
 
     public ItemScore score(ItemSnapshot item) {

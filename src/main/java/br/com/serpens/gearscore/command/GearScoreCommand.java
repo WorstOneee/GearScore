@@ -7,6 +7,7 @@ import br.com.serpens.gearscore.engine.RemoteScores;
 import br.com.serpens.gearscore.engine.ScoreEngine;
 import br.com.serpens.gearscore.model.CachedScore;
 import br.com.serpens.gearscore.model.PlayerRecord;
+import br.com.serpens.gearscore.score.GearType;
 import br.com.serpens.gearscore.score.ScoreResult;
 import br.com.serpens.gearscore.score.ScoreResult.EnchantScore;
 import br.com.serpens.gearscore.score.ScoreResult.ItemScore;
@@ -167,26 +168,13 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
         PlayerRecord record = score.record();
         Messages messages = plugin.messages();
         send(sender, "details.header", identity(record));
-        if (detail.itemCount() == 0) {
-            send(sender, "details.empty");
-        } else {
-            send(sender, "details.armor", number("count", detail.armorCount()),
-                    number("total", detail.armorScore()), number("base", detail.armorBase()),
-                    number("enchant", detail.armorEnchant()));
-            send(sender, "details.weapons", number("count", detail.weaponCount()),
-                    number("total", detail.weaponScore()), number("base", detail.weaponBase()),
-                    number("enchant", detail.weaponEnchant()));
-
-            int listed = Math.min(detail.itemCount(), plugin.settings().detailsMaxItems());
-            for (int i = 0; i < listed; i++) {
-                item(sender, detail.item(i));
-            }
-            if (listed < detail.itemCount()) {
-                double rest = 0.0;
-                for (int i = listed; i < detail.itemCount(); i++) {
-                    rest += detail.item(i).total();
-                }
-                send(sender, "details.more", number("count", detail.itemCount() - listed), decimal("total", rest));
+        for (int i = 0; i < ScoreResult.SET_SIZE; i++) {
+            String slot = messages.raw(i == ScoreResult.WEAPON ? "slot.weapon" : "slot." + GearType.ARMOR_SLOTS[i].id());
+            ItemScore piece = detail.piece(i);
+            if (piece == null) {
+                send(sender, "details.empty", Placeholder.unparsed("slot", slot));
+            } else {
+                item(sender, slot, piece);
             }
         }
         send(sender, "details.updated",
@@ -197,7 +185,7 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
         }
     }
 
-    private void item(CommandSender sender, ItemScore item) {
+    private void item(CommandSender sender, String slot, ItemScore item) {
         Messages messages = plugin.messages();
         Component hover = messages.get("details.hover-base", decimal("base", item.base()));
         if (item.enchants().length == 0) {
@@ -219,6 +207,7 @@ public final class GearScoreCommand implements CommandExecutor, TabCompleter {
                     Placeholder.unparsed("note", note)));
         }
         Component line = messages.get("details.item",
+                Placeholder.unparsed("slot", slot),
                 Placeholder.component("item", Component.translatable(
                         item.item().def().translationKey(), item.item().def().material())),
                 decimal("total", item.total()),

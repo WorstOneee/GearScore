@@ -13,8 +13,7 @@ import java.util.Set;
 public record Settings(String serverName, boolean official, int debounceTicks, int maxPerTick,
                        Set<String> ignoredWorlds, int pageSize, int maxEntries, long topCacheMillis,
                        long positionRefreshMillis, String fallback, long remoteIntervalMillis,
-                       long remoteRecheckMillis, int remoteBatchSize, int remoteMaxBatches,
-                       int detailsMaxItems) {
+                       long remoteRecheckMillis, int remoteBatchSize, int remoteMaxBatches) {
 
     public static Settings from(ConfigurationSection root) {
         String name = root.getString("server.name", "server").trim();
@@ -43,8 +42,7 @@ public record Settings(String serverName, boolean official, int debounceTicks, i
                 Math.max(5L, root.getLong("query-refresh.interval-seconds", 30L)) * 1000L,
                 Math.max(1L, root.getLong("query-refresh.join-recheck-seconds", 5L)) * 1000L,
                 clamp(root.getInt("query-refresh.batch-size", 100), 1, 500),
-                clamp(root.getInt("query-refresh.max-batches-per-cycle", 3), 1, 20),
-                clamp(root.getInt("display.details-max-items", 12), 1, 41));
+                clamp(root.getInt("query-refresh.max-batches-per-cycle", 3), 1, 20));
     }
 
     private static int clamp(int value, int min, int max) {

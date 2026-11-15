@@ -105,14 +105,28 @@ class ScoreEngineTest {
     }
 
     @Test
-    void addingASecondCopyOfAnItemIsAChange() {
+    void carryingMoreOfTheSameIsRecalculatedButNotWritten() {
         inventories.put(player, TestRules.carrying(item(rules, "netherite_sword", "sharpness", 5)));
         engine.evaluateNow(player);
+        // A second copy and a weaker weapon: the inventory changed, the best set did not.
         inventories.put(player, TestRules.carrying(item(rules, "netherite_sword", "sharpness", 5),
-                item(rules, "netherite_sword", "sharpness", 5)));
+                item(rules, "netherite_sword", "sharpness", 5), item(rules, "iron_axe")));
         engine.evaluateNow(player);
+        assertEquals(2, metrics.evaluations.sum());
+        assertEquals(1, written.size(), "same result, nothing to persist");
+        assertEquals(235, engine.cached(player).record().score());
+    }
+
+    @Test
+    void pickingUpABetterPieceRaisesTheScoreWithoutEquippingIt() {
+        inventories.put(player, gear(armorSet(rules, "iron"), item(rules, "iron_sword")));
+        engine.evaluateNow(player);
+        assertEquals(185, engine.cached(player).record().score());
+        inventories.put(player, gear(armorSet(rules, "iron"), item(rules, "iron_sword"),
+                item(rules, "netherite_chestplate", "protection", 4)));
+        engine.evaluateNow(player);
+        assertEquals(185 - 48 + 240, engine.cached(player).record().score());
         assertEquals(2, written.size());
-        assertEquals(2 * written.get(0).score(), written.get(1).score());
     }
 
     @Test

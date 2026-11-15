@@ -1,0 +1,79 @@
+# ============================================================================
+#  GearScore - mensagens (formato MiniMessage)
+#  https://docs.advntr.dev/minimessage/format.html
+#  Use /gearscore reload após editar.
+#
+#  O plugin só envia mensagens em resposta a comandos. Nenhuma mensagem é
+#  enviada quando a pontuação muda.
+# ============================================================================
+
+# Versão deste arquivo, usada pela atualização automática. Não altere.
+file-version: 2
+
+prefix: "<gold>GearScore <gray>»<reset> "
+
+no-permission: "<prefix><red>Você não tem permissão para isso."
+players-only: "<prefix><red>Informe um jogador: <white>/gs <jogador>"
+unknown-command: "<prefix><red>Comando desconhecido. Use <white>/gs ajuda</white>."
+invalid-page: "<prefix><red>Página inválida."
+
+help:
+  header: "<prefix><white>Comandos"
+  self: " <gold>/gs <gray>- <white>sua pontuação"
+  view: " <gold>/gs <jogador> <gray>- <white>pontuação de outro jogador"
+  details: " <gold>/gs detalhes [jogador] <gray>- <white>equipamentos e encantamentos que pontuam"
+  top: " <gold>/gs top [página] <gray>- <white>ranking"
+  reload: " <gold>/gs reload <gray>- <white>recarrega as configurações"
+  diag: " <gold>/gs diag <gray>- <white>diagnóstico técnico"
+
+not-ready: "<prefix><yellow>A pontuação ainda não está disponível. Tente de novo em instantes."
+not-found: "<prefix><red>Nenhuma pontuação registrada para <white><player></white>."
+db-unavailable: "<prefix><red>Não foi possível consultar agora. Tente novamente em instantes."
+db-busy: "<prefix><yellow>Muitas consultas em andamento. Tente de novo em alguns segundos."
+db-disabled: "<prefix><red>Este recurso não está disponível neste servidor."
+
+# Resposta do /gs e do /gs <jogador>.
+summary:
+  line: "<prefix><white><player></white> <gray>•</gray> <gold><score> GS</gold> <gray>•</gray> <tier>"
+
+# Resposta do /gs detalhes [jogador].
+details:
+  header: "<prefix><white><player></white> <gray>•</gray> <gold><score> GS</gold> <gray>•</gray> <tier>"
+  armor: " <yellow>Armaduras <gray>(<count>)<gray>: <white><total></white> <gray>= <white><base></white> base + <white><enchant></white> encantamentos"
+  weapons: " <yellow>Armas <gray>(<count>)<gray>: <white><total></white> <gray>= <white><base></white> base + <white><enchant></white> encantamentos"
+  # Uma linha por equipamento. Passe o mouse para ver os encantamentos.
+  item: " <gray>▪ <white><item></white> <gold><total></gold> <gray>(<base> base + <enchant> enc.)"
+  # Linhas do texto exibido ao passar o mouse sobre um equipamento.
+  hover-base: "<gray>Base: <white><base>"
+  hover-enchant: "<gray><name> <level>: <white><points></white> <yellow><note>"
+  hover-none: "<gray>Sem encantamentos"
+  more: " <gray>▪ + <white><count></white> outros equipamentos: <gold><total></gold>"
+  empty: " <gray>Nenhum equipamento que pontue no inventário."
+  updated: " <gray>Atualizado <white><updated></white>"
+  # Exibida somente para quem tem permissão administrativa.
+  admin: " <gray>Origem: <white><server></white> <gray>• regras v<white><version></white>"
+  unavailable: "<prefix><yellow>O detalhamento só está disponível para jogadores online no servidor principal."
+
+note:
+  capped: "(acima do limite: contado como o máximo)"
+  over-limit: "(acima do limite: não pontua)"
+  incompatible: "(combinação incompatível: ignorado)"
+  unknown: "(sem regra para este equipamento: vale 0)"
+
+top:
+  header: "<prefix><white>Ranking <gray>• página <white><page></white>/<white><pages></white>"
+  line: " <yellow>#<position> <white><player></white> <gray>•</gray> <gold><score> GS</gold> <gray>•</gray> <tier>"
+  empty: "<prefix><white>O ranking ainda está vazio."
+
+reload:
+  ok: "<prefix><green>Configuração recarregada. <white>Regras v<version>; <players> jogador(es) online serão reavaliados aos poucos."
+  warning: "<prefix><yellow>Aviso: <white><warning>"
+  failed: "<prefix><red>Falha ao recarregar; as regras anteriores foram mantidas: <white><error>"
+  restart: "<prefix><yellow>Mudanças em server, query-refresh, ranking e database.yml só valem após reiniciar."
+
+time:
+  now: "agora"
+  seconds: "há {n}s"
+  minutes: "há {n} min"
+  hours: "há {n} h"
+  days: "há {n} d"

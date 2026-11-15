@@ -8,7 +8,7 @@
 # ============================================================================
 
 # Versão deste arquivo, usada pela atualização automática. Não altere.
-file-version: 2
+file-version: 3
 
 prefix: "<gold>GearScore <gray>»<reset> "
 
@@ -21,7 +21,7 @@ help:
   header: "<prefix><white>Comandos"
   self: " <gold>/gs <gray>- <white>sua pontuação"
   view: " <gold>/gs <jogador> <gray>- <white>pontuação de outro jogador"
-  details: " <gold>/gs detalhes [jogador] <gray>- <white>equipamentos e encantamentos que pontuam"
+  details: " <gold>/gs detalhes [jogador] <gray>- <white>as cinco peças que formam a pontuação"
   top: " <gold>/gs top [página] <gray>- <white>ranking"
   reload: " <gold>/gs reload <gray>- <white>recarrega as configurações"
   diag: " <gold>/gs diag <gray>- <white>diagnóstico técnico"
@@ -36,23 +36,27 @@ db-disabled: "<prefix><red>Este recurso não está disponível neste servidor."
 summary:
   line: "<prefix><white><player></white> <gray>•</gray> <gold><score> GS</gold> <gray>•</gray> <tier>"
 
-# Resposta do /gs detalhes [jogador].
+# Resposta do /gs detalhes [jogador]: as cinco peças escolhidas.
 details:
   header: "<prefix><white><player></white> <gray>•</gray> <gold><score> GS</gold> <gray>•</gray> <tier>"
-  armor: " <yellow>Armaduras <gray>(<count>)<gray>: <white><total></white> <gray>= <white><base></white> base + <white><enchant></white> encantamentos"
-  weapons: " <yellow>Armas <gray>(<count>)<gray>: <white><total></white> <gray>= <white><base></white> base + <white><enchant></white> encantamentos"
-  # Uma linha por equipamento. Passe o mouse para ver os encantamentos.
-  item: " <gray>▪ <white><item></white> <gold><total></gold> <gray>(<base> base + <enchant> enc.)"
-  # Linhas do texto exibido ao passar o mouse sobre um equipamento.
+  # Uma linha por lugar do conjunto. Passe o mouse para ver os encantamentos.
+  item: " <yellow><slot><gray>: <white><item></white> <gold><total></gold> <gray>(<base> base + <enchant> enc.)"
+  empty: " <yellow><slot><gray>: <white>nenhum"
+  # Linhas do texto exibido ao passar o mouse sobre uma peça.
   hover-base: "<gray>Base: <white><base>"
   hover-enchant: "<gray><name> <level>: <white><points></white> <yellow><note>"
   hover-none: "<gray>Sem encantamentos"
-  more: " <gray>▪ + <white><count></white> outros equipamentos: <gold><total></gold>"
-  empty: " <gray>Nenhum equipamento que pontue no inventário."
   updated: " <gray>Atualizado <white><updated></white>"
   # Exibida somente para quem tem permissão administrativa.
   admin: " <gray>Origem: <white><server></white> <gray>• regras v<white><version></white>"
   unavailable: "<prefix><yellow>O detalhamento só está disponível para jogadores online no servidor principal."
+
+slot:
+  helmet: "Capacete"
+  chestplate: "Peitoral"
+  leggings: "Calça"
+  boots: "Bota"
+  weapon: "Arma"
 
 note:
   capped: "(acima do limite: contado como o máximo)"

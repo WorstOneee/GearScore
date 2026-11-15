@@ -1,8 +1,9 @@
 package br.com.serpens.gearscore.score;
 
 /**
- * Outcome of one evaluation, including the per-item breakdown shown by the details command.
- * total = armorBase + armorEnchant + weaponBase + weaponEnchant, summed over every valid item.
+ * Outcome of one evaluation: the best set the player can assemble from what they carry.
+ * total = best helmet + best chestplate + best leggings + best boots + best weapon,
+ * each with its base and enchantment points.
  */
 public final class ScoreResult {
 
@@ -28,28 +29,33 @@ public final class ScoreResult {
         }
     }
 
+    /** Number of pieces in a set: four armor slots and one weapon. */
+    public static final int SET_SIZE = 5;
+    /** Index of the weapon in {@link #piece(int)}; armor uses the ordinals of its slot type. */
+    public static final int WEAPON = 4;
+
     private final int armorBase;
     private final int armorEnchant;
     private final int weaponBase;
     private final int weaponEnchant;
-    private final int armorCount;
-    private final int weaponCount;
-    private final ItemScore[] items;
+    private final ItemScore[] pieces;
+    private final int candidates;
     private final Tier tier;
     private final int rulesVersion;
 
     /**
-     * @param items every scored item, highest score first
+     * @param pieces     the selected helmet, chestplate, leggings, boots and weapon; null where
+     *                   the player carries none
+     * @param candidates valid items that competed for those five places
      */
     public ScoreResult(int armorBase, int armorEnchant, int weaponBase, int weaponEnchant,
-                       int armorCount, int weaponCount, ItemScore[] items, RuleSet rules) {
+                       ItemScore[] pieces, int candidates, RuleSet rules) {
         this.armorBase = armorBase;
         this.armorEnchant = armorEnchant;
         this.weaponBase = weaponBase;
         this.weaponEnchant = weaponEnchant;
-        this.armorCount = armorCount;
-        this.weaponCount = weaponCount;
-        this.items = items;
+        this.pieces = pieces;
+        this.candidates = candidates;
         this.tier = rules.tierFor(total());
         this.rulesVersion = rules.version();
     }
@@ -82,22 +88,22 @@ public final class ScoreResult {
         return weaponBase + weaponEnchant;
     }
 
-    /** Armor pieces counted, worn or carried. */
-    public int armorCount() {
-        return armorCount;
+    /**
+     * Selected piece: 0 helmet, 1 chestplate, 2 leggings, 3 boots, {@link #WEAPON} weapon.
+     *
+     * @return null when the player carries nothing for that place
+     */
+    public ItemScore piece(int index) {
+        return pieces[index];
     }
 
-    public int weaponCount() {
-        return weaponCount;
+    public ItemScore weapon() {
+        return pieces[WEAPON];
     }
 
-    public int itemCount() {
-        return items.length;
-    }
-
-    /** Scored items, highest score first. */
-    public ItemScore item(int index) {
-        return items[index];
+    /** Valid items found in the inventory, selected or not. */
+    public int candidates() {
+        return candidates;
     }
 
     public Tier tier() {

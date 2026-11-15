@@ -6,13 +6,15 @@
 #  na conta.
 #
 #  Fórmula:
-#    GearScore = soma de TODOS os equipamentos válidos que o jogador carrega
-#    cada equipamento = base (material e tipo) + encantamentos
+#    GearScore = melhor capacete + melhor peitoral + melhor calça
+#              + melhor bota + melhor arma
+#    cada peça = base (material e tipo) + encantamentos
 #
-#  São lidos os 36 slots do inventário (hotbar incluída), os 4 slots de
-#  armadura e a mão secundária. Cada slot conta uma vez; itens iguais em
-#  slots diferentes são equipamentos distintos e somam individualmente.
-#  Armaduras guardadas no inventário também pontuam.
+#  O plugin procura em tudo o que o jogador carrega: os 36 slots do
+#  inventário (hotbar incluída), os 4 slots de armadura e a mão secundária.
+#  Para cada um dos cinco lugares ele escolhe a peça de MAIOR pontuação
+#  completa, esteja ela equipada ou guardada. As demais não somam: carregar
+#  dez espadas vale o mesmo que carregar só a melhor delas.
 #
 #  NÃO são lidos: Ender Chest, baús abertos, cursor, grade de criação e o
 #  conteúdo de shulkers ou outros recipientes.
@@ -25,12 +27,12 @@
 # ============================================================================
 
 # Versão deste arquivo, usada pela atualização automática. Não altere.
-file-version: 2
+file-version: 3
 
 # Versão das regras de cálculo. Aumente este número sempre que mudar pesos de
 # forma relevante: ele é gravado junto com cada pontuação, permitindo saber
 # com qual tabela um resultado foi calculado.
-rules-version: 2
+rules-version: 3
 
 # ----------------------------------------------------------------------------
 #  Servidor
@@ -325,26 +327,16 @@ custom-items:
 #  Faixas de classificação
 # ----------------------------------------------------------------------------
 # "min" é a pontuação mínima da faixa. "name" aceita MiniMessage.
-# Como a pontuação soma tudo o que o jogador carrega, a escala é maior que a
-# de um único conjunto. Referência com a tabela padrão: armadura de
-# netherita totalmente encantada vale cerca de 1050; cada arma principal
-# totalmente encantada, entre 250 e 370.
+# Referência com a tabela padrão: o melhor conjunto possível (armadura de
+# netherita totalmente encantada + a melhor arma) fica perto de 1400.
 tiers:
   - { id: iniciante, name: "<gray>Iniciante",          min: 0 }
-  - { id: aprendiz,  name: "<white>Aprendiz",          min: 300 }
-  - { id: guerreiro, name: "<green>Guerreiro",         min: 700 }
-  - { id: veterano,  name: "<aqua>Veterano",           min: 1200 }
-  - { id: elite,     name: "<light_purple>Elite",      min: 1800 }
-  - { id: lendario,  name: "<gold>Lendário",           min: 2400 }
-  - { id: mitico,    name: "<red><bold>Mítico",        min: 3000 }
-
-# ----------------------------------------------------------------------------
-#  Exibição
-# ----------------------------------------------------------------------------
-display:
-  # Quantos equipamentos o /gs detalhes lista (os de maior pontuação). O
-  # restante aparece somado em uma linha.
-  details-max-items: 12
+  - { id: aprendiz,  name: "<white>Aprendiz",          min: 150 }
+  - { id: guerreiro, name: "<green>Guerreiro",         min: 350 }
+  - { id: veterano,  name: "<aqua>Veterano",           min: 600 }
+  - { id: elite,     name: "<light_purple>Elite",      min: 900 }
+  - { id: lendario,  name: "<gold>Lendário",           min: 1200 }
+  - { id: mitico,    name: "<red><bold>Mítico",        min: 1400 }
 
 # ----------------------------------------------------------------------------
 #  Ranking

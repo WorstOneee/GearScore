@@ -20,8 +20,11 @@ class FileUpdaterTest {
     private static final String CONFIG_10 = TestRules.resource("legacy/config-1.0.yml");
     private static final String CONFIG_11 = TestRules.resource("legacy/config-1.1.yml");
     private static final String MESSAGES = TestRules.resource("messages.yml");
+    private static final String CONFIG_20 = TestRules.resource("legacy/config-2.0.yml");
     private static final String MESSAGES_11 = TestRules.resource("legacy/messages-1.1.yml");
-    private static final List<String> OLD_CONFIGS = List.of(CONFIG_10, CONFIG_11);
+    private static final String MESSAGES_20 = TestRules.resource("legacy/messages-2.0.yml");
+    private static final List<String> OLD_CONFIGS = List.of(CONFIG_10, CONFIG_11, CONFIG_20);
+    private static final List<String> OLD_MESSAGES = List.of(MESSAGES_11, MESSAGES_20);
 
     private static YamlConfiguration yaml(String text) throws Exception {
         YamlConfiguration yaml = new YamlConfiguration();
@@ -33,9 +36,11 @@ class FileUpdaterTest {
     void versionIsReadFromTheMarker() {
         assertEquals(1, FileUpdater.versionOf(CONFIG_10));
         assertEquals(1, FileUpdater.versionOf(CONFIG_11));
-        assertEquals(2, FileUpdater.versionOf(CONFIG));
+        assertEquals(2, FileUpdater.versionOf(CONFIG_20));
+        assertEquals(3, FileUpdater.versionOf(CONFIG));
         assertEquals(1, FileUpdater.versionOf(MESSAGES_11));
-        assertEquals(2, FileUpdater.versionOf(MESSAGES));
+        assertEquals(2, FileUpdater.versionOf(MESSAGES_20));
+        assertEquals(3, FileUpdater.versionOf(MESSAGES));
     }
 
     @Test
@@ -44,9 +49,8 @@ class FileUpdaterTest {
             FileUpdater.Result result = FileUpdater.merge(old, CONFIG, OLD_CONFIGS);
             assertEquals(CONFIG, result.text());
             assertTrue(result.kept().isEmpty(), result.kept().toString());
-            assertTrue(result.updated().contains("tiers"));
-            assertTrue(result.updated().contains("enchantments"));
             assertTrue(result.updated().contains("rules-version"));
+            assertFalse(result.text().contains("details-max-items"), "obsolete untouched sections are dropped");
         }
     }
 
@@ -55,7 +59,7 @@ class FileUpdaterTest {
         FileUpdater.Result result = FileUpdater.merge(CONFIG, CONFIG, OLD_CONFIGS);
         assertEquals(CONFIG, result.text());
         assertTrue(result.updated().isEmpty() && result.kept().isEmpty() && result.added().isEmpty());
-        assertEquals(MESSAGES, FileUpdater.merge(MESSAGES, MESSAGES, List.of(MESSAGES_11)).text());
+        assertEquals(MESSAGES, FileUpdater.merge(MESSAGES, MESSAGES, OLD_MESSAGES).text());
     }
 
     @Test
@@ -76,7 +80,6 @@ class FileUpdaterTest {
 
         FileUpdater.Result result = FileUpdater.merge(mine, CONFIG, OLD_CONFIGS);
         assertEquals(List.of("server", "enchantments", "tiers"), result.kept());
-        assertTrue(result.added().contains("display"));
         assertTrue(result.updated().containsAll(List.of("rules-version", "evaluation", "placeholders")));
 
         // What the administrator wrote is still there, comment included.
@@ -86,13 +89,13 @@ class FileUpdaterTest {
 
         YamlConfiguration merged = yaml(result.text());
         assertEquals("hub", merged.getString("server.name"));
-        assertEquals(2, merged.getInt("file-version"));
-        assertEquals(2, merged.getInt("rules-version"));
-        assertEquals(12, merged.getInt("display.details-max-items"));
+        assertEquals(3, merged.getInt("file-version"));
+        assertEquals(3, merged.getInt("rules-version"));
+        assertFalse(merged.contains("display"));
         assertEquals("—", merged.getString("placeholders.fallback"));
         assertFalse(merged.contains("evaluation.weapon-slots"));
-        // The kept tiers are the old ones, untouched.
-        assertEquals(150, ((Number) merged.getMapList("tiers").get(1).get("min")).intValue());
+        // The kept tiers are the administrator's, untouched.
+        assertEquals("<gold>Imortal", merged.getMapList("tiers").get(5).get("name"));
 
         // The result is a working configuration.
         RuleParser parser = new RuleParser(merged, null);
@@ -109,7 +112,28 @@ class FileUpdaterTest {
         String once = FileUpdater.merge(mine, CONFIG, OLD_CONFIGS).text();
         FileUpdater.Result twice = FileUpdater.merge(once, CONFIG, OLD_CONFIGS);
         assertEquals(once, twice.text());
-        assertEquals(2, FileUpdater.versionOf(once));
+        assertEquals(3, FileUpdater.versionOf(once));
+    }
+
+    @Test
+    void aServerOnTheFullInventoryVersionGetsTheBestSetDefaults() throws Exception {
+        // 2.0.0 file from a live server: only the name and the official list were edited.
+        String mine = CONFIG_20.replace("  name: \"newera\"", "  name: \"survivalnewera\"")
+                .replace("    - \"newera\"", "    - \"survivalnewera\"");
+        assertFalse(mine.equals(CONFIG_20));
+        FileUpdater.Result result = FileUpdater.merge(mine, CONFIG, OLD_CONFIGS);
+        assertEquals(List.of("server"), result.kept());
+        assertTrue(result.updated().containsAll(List.of("rules-version", "tiers")));
+
+        YamlConfiguration merged = yaml(result.text());
+        assertEquals("survivalnewera", merged.getString("server.name"));
+        assertTrue(Settings.from(merged).official());
+        assertEquals(3, merged.getInt("rules-version"));
+        assertEquals(1400, ((Number) merged.getMapList("tiers").get(6).get("min")).intValue());
+        assertFalse(merged.contains("display"));
+        // Enchantment rules were already the scoped ones and stay as they are.
+        assertFalse(result.updated().contains("enchantments"));
+        assertFalse(result.kept().contains("enchantments"));
     }
 
     @Test
@@ -135,12 +159,15 @@ class FileUpdaterTest {
 
     @Test
     void untouchedMessagesGetTheNewTexts() throws Exception {
-        FileUpdater.Result result = FileUpdater.merge(MESSAGES_11, MESSAGES, List.of(MESSAGES_11));
+        assertEquals(MESSAGES, FileUpdater.merge(MESSAGES_20, MESSAGES, OLD_MESSAGES).text());
+        FileUpdater.Result result = FileUpdater.merge(MESSAGES_11, MESSAGES, OLD_MESSAGES);
         assertEquals(MESSAGES, result.text());
         YamlConfiguration merged = yaml(result.text());
+        assertEquals("Capacete", merged.getString("slot.helmet"));
+        assertTrue(merged.getString("details.item").contains("<slot>"));
+        assertFalse(merged.contains("details.more"));
         assertTrue(merged.getString("summary.line").contains("<score> GS"));
         assertFalse(merged.contains("summary.note"));
-        assertFalse(merged.contains("slot"));
     }
 
     @Test
@@ -150,7 +177,7 @@ class FileUpdaterTest {
                         "no-permission: \"<prefix><red>Sem permissão, guerreiro.\"")
                 .replace("prefix: \"<dark_gray>[<gold>GearScore<dark_gray>]<reset> \"",
                         "prefix: \"<aqua>[Serpens]<reset> \"");
-        FileUpdater.Result result = FileUpdater.merge(mine, MESSAGES, List.of(MESSAGES_11));
+        FileUpdater.Result result = FileUpdater.merge(mine, MESSAGES, OLD_MESSAGES);
         assertEquals(List.of("prefix", "no-permission"), result.kept());
 
         YamlConfiguration merged = yaml(result.text());
